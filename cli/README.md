@@ -2,21 +2,19 @@
 
 ## Install
 
-### Closed beta: private GitHub Releases wheel
+### From PyPI
 
-The recommended closed-beta distribution is a prebuilt wheel attached to a
-private GitHub Release. Testers should download the wheel asset from the
-release page and install it locally:
+The recommended public distribution is the published package from PyPI:
 
 ```bash
-pip install ./cemi-0.1.1-py3-none-any.whl
+pip install cemi-cli
 ```
 
-This is the preferred beta path because it:
+This is the preferred install path because it:
 
 - avoids a source checkout
 - avoids requiring Node/Vite on tester machines
-- installs the exact build you published for that beta drop
+- installs the exact published CLI package
 
 ### From source (developer install only)
 
@@ -28,7 +26,7 @@ pip install -e ./cli
 
 ## Local-only quick start (canonical flow)
 
-1. **Install**: install the beta wheel from your private GitHub Release, or use `pip install -e ./cli` for development.
+1. **Install**: install from PyPI with `pip install cemi-cli`, or use `pip install -e ./cli` for development.
 2. **In your script**: `create_writer(project="...", log_dir="...")` — runs go to `log_dir/runs/`, artifacts to `log_dir/artifacts/`. Default `log_dir` is `.cemi`.
 3. **Start the gateway** (same path as `log_dir`): `cemi gateway` or `cemi gateway --save-dir /path/to/log_dir`.
 4. **Open the workspace**: `cemi view` or open `http://127.0.0.1:3141/workspace`. No login; runs and metrics appear in the UI.
@@ -84,9 +82,9 @@ Run **your** training/benchmark script from the compression-engine repo (the cod
 
 ---
 
-## Closed beta behavior
+## Package behavior
 
-This beta is intentionally local-only.
+This package is intentionally local-only by default.
 
 | Command | Auth required? | Data destination |
 |---------|----------------|------------------|
@@ -230,7 +228,7 @@ datasets, or files you would not want copied into the artifact store.
 
 ### Gateway bind address
 
-For the closed beta, the gateway should stay bound to `127.0.0.1` only. It is
+The gateway should stay bound to `127.0.0.1` only. It is
 intended for local use on the same machine and should not be exposed on a LAN
 or public interface.
 
@@ -273,12 +271,12 @@ or PID files.
 1. Run `cemi stop`.
 2. Remove stale project state with `rm -rf .cemi` if needed.
 3. Remove per-user state with `rm -rf ~/.cemi` if config or PID files are stale.
-4. Reinstall the published wheel from the private GitHub Release.
+4. Reinstall the published package from PyPI.
 
 ### Uninstall
 
 ```bash
-pip uninstall cemi
+pip uninstall cemi-cli
 ```
 
 If you also want to remove local state, delete `.cemi` in your project directory

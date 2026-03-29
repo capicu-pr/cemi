@@ -1,5 +1,5 @@
 cff-version: 1.2.0
-title: "Capicú Edge ML Inference (CEMI)"
+title: "CEMI: An Edge AI MLOps Tool for Model Compression and Embedded Deployment"
 message: "If you use CEMI in research, products, benchmarks, or publications, please cite the software using the metadata below."
 type: software
 
@@ -15,7 +15,7 @@ authors:
 
 preferred-citation:
   type: software
-  title: "Capicú Edge ML Inference (CEMI)"
+  title: "CEMI: An Edge AI MLOps Tool for Model Compression and Embedded Deployment"
   authors:
     - family-names: "Cruz Romero"
       given-names: "Sebastián A."
@@ -31,19 +31,20 @@ preferred-citation:
   version: "0.1.1"
 
 abstract: >
-  CEMI is an edge AI tool for managing and analyzing runs, comparisons,
-  and explicit action-event streams across local and extensible testing
-  of model compression and evaluation workflows.
+  Capicú Edge ML Inference (CEMI) is an Edge AI/TinyML experiment workspace
+  managing and analyzing runs, comparisons, and explicit action-event
+  streams across local and extensible testing of model compression and
+  evaluation workflows.
 
 repository-code: "https://github.com/capicu-pr/cemi"
-url: "https://github.com/capicu-pr/cemi"
+url: "https://cemi.capicu.ai"
 
 keywords:
   - machine learning
   - edge ai
   - tinyml
   - model compression
-  - evaluation
+  - deployment
   - experiment tracking
   - run analysis
   - dashboard

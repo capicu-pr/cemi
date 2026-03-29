@@ -41,7 +41,7 @@ BANNER = r"""
 # Optional public docs/product URL shown in CLI help when configured.
 CEMI_PRODUCT_URL = os.environ.get("CEMI_PRODUCT_URL", "").strip()
 CLOSED_BETA_CLOUD_MESSAGE = (
-    "Cloud actions are disabled in this closed beta. "
+    "Cloud actions are disabled in this build. "
     "Use the local gateway and workspace only."
 )
 
@@ -95,7 +95,7 @@ def _print_help_commands() -> None:
         table.add_row(Text("cemi " + cmd, style="cyan"), Text(desc, style="white"))
     _console.print(table)
     _console.print()
-    _console.print(Text("Closed beta note: cloud features are hidden in this build.", style="yellow"))
+    _console.print(Text("Local-first note: cloud features are hidden in this build.", style="yellow"))
     _console.print()
     _console.print(
         Text("Run cemi <command> --help for command-specific help.", style="cyan")
@@ -499,7 +499,7 @@ def gateway(port: int, save_dir: str | None) -> None:
 
 @app.command(hidden=True)
 def auth() -> None:
-    """Hidden placeholder for disabled cloud auth in the closed beta."""
+    """Hidden placeholder for disabled cloud auth in the local-first package."""
     _exit_cloud_disabled()
 
 
@@ -511,7 +511,7 @@ def stop() -> None:
     - Kills the background local gateway process (if any).
     - Kills the background workspace frontend dev server (if any).
 
-    This is only about local processes used by the closed beta.
+    This is only about local processes used by the local-first package.
     """
     stopped_any = False
 

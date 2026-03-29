@@ -3,9 +3,9 @@ requires = ["setuptools>=61", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "cemi"
+name = "cemi-cli"
 version = "0.1.1"
-description = "CEMI CLI — local gateway, workspace, and run tracking for the closed beta"
+description = "CEMI: An Edge AI MLOps Tool for Model Compression and Embedded Deployment"
 readme = "README.md"
 requires-python = ">=3.9"
 dependencies = [
@@ -25,6 +25,8 @@ cemi = "cemi.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["."]
+include = ["cemi*"]
+namespaces = false
 
 [tool.setuptools]
 include-package-data = true

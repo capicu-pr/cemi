@@ -2,7 +2,7 @@
 
 # Capicú Edge ML Inference
 
-Capicú Edge ML Inference (CEMI) is an Edge AI/TinyML experiment workspace for turning run metadata, metrics, artifacts, and explicit action events into a browsable workflow.
+Capicú Edge ML Inference (CEMI) is an Edge AI/TinyML experiment workspace managing and analyzing runs, comparisons, and explicit action-event streams across local and extensible testing of model compression and evaluation workflows.
 
 At a high level, CEMI provides three main capabilities:
 
