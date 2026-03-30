@@ -28,7 +28,7 @@ preferred-citation:
 
   year: 2026
   url: "https://github.com/capicu-pr/cemi"
-  version: "0.1.1"
+  version: "0.1.2"
 
 abstract: >
   Capicú Edge ML Inference (CEMI) is an Edge AI/TinyML experiment workspace
@@ -52,5 +52,5 @@ keywords:
   - compare
   - cli
 
-version: "0.1.1"
-date-released: 2026-03-26
+version: "0.1.2"
+date-released: 2026-03-30

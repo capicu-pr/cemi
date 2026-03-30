@@ -7,7 +7,7 @@ from backend.routes import router as api_router
 from backend.ingestion import router as ingestion_router
 from backend.metrics_stream import router as metrics_stream_router
 
-app = FastAPI(title="CEMI API", version="0.1.1")
+app = FastAPI(title="CEMI API", version="0.1.2")
 
 app.add_middleware(
     CORSMiddleware,
