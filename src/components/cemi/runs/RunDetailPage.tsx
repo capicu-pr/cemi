@@ -23,6 +23,7 @@ import {
 } from "lucide-react";
 import type { RunRecord } from "../../../types/domain";
 import { ProfilingTab } from "./tabs/ProfilingTab";
+import { ContractResultPanel } from "./ContractResultPanel";
 
 interface RunDetailPageProps {
   projectName?: string;
@@ -558,6 +559,11 @@ export function RunDetailPage({
                 )}
               </div>
             </div>
+            {selectedRun?.contract_result && (
+              <div className="px-0 pt-2">
+                <ContractResultPanel result={selectedRun.contract_result} />
+              </div>
+            )}
           </div>
         ) }
         </>

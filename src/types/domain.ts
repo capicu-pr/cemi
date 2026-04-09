@@ -101,6 +101,22 @@ export interface RunActionEvent {
   run_name?: string;
 }
 
+export interface ContractGateResult {
+  id: string;
+  role: string;
+  metric?: { name: string; source?: string; aggregation?: string };
+  run_value?: number | null;
+  baseline_value?: number | null;
+  pass: boolean;
+  explain?: string;
+}
+
+export interface ContractResult {
+  pass: boolean;
+  gate_results?: ContractGateResult[];
+  run_id?: string;
+}
+
 export interface Run {
   id: UUID;
   project_id?: UUID;
@@ -128,6 +144,7 @@ export interface Run {
   timestamp?: number;
   metrics?: RunMetricEvent[] | { events?: RunMetricEvent[]; summary?: RunMetricEvent[] };
   action_events?: RunActionEvent[];
+  contract_result?: ContractResult;
 }
 
 export interface RunRecord extends Run {}

@@ -22,6 +22,7 @@ import type { RunRecord } from "../../../types/domain";
 import { getDuration, formatDuration } from "../../../utils/runHelpers";
 import { animationPresets } from "../../ui/animated-interactive";
 import { ButtonUtility } from "../../base/buttons/button-utility";
+import { ContractBadge } from "./ContractBadge";
 
 interface RunsTableProps {
   runs: RunRecord[];
@@ -191,7 +192,7 @@ export function RunsTable({
 
   const columnCount =
     1 + // interaction
-    4 + // fixed columns
+    5 + // fixed columns (name, status, verified, created, duration)
     visibleMetricKeys.length +
     (hiddenMetricCount > 0 ? 1 : 0); // optional overflow indicator
 
@@ -245,6 +246,11 @@ export function RunsTable({
           <motion.div whileHover={{ scale: 1.05 }} transition={animationPresets.spring}>
             {getStatusBadge(run.status)}
           </motion.div>
+        </TableCell>
+
+        {/* Verified */}
+        <TableCell>
+          <ContractBadge result={(run as any).contract_result} size="sm" />
         </TableCell>
 
         {/* Created */}
@@ -303,6 +309,9 @@ export function RunsTable({
           />
           <ColumnHeader field="name">Name</ColumnHeader>
           <ColumnHeader field="status">Status</ColumnHeader>
+          <TableHead style={{ backgroundColor: "var(--cemi-surface-bg, #F9F5EA)", whiteSpace: "nowrap" }}>
+            <span className="text-xs font-medium uppercase tracking-wide text-[rgba(15,52,85,0.7)]">Verified</span>
+          </TableHead>
           <ColumnHeader field="created_at">Created</ColumnHeader>
           <ColumnHeader field="duration">Duration</ColumnHeader>
           {visibleMetricKeys.map((k) => (
