@@ -21,6 +21,7 @@ from rich.text import Text
 _console = Console()
 _console_err = Console(stderr=True)
 
+from .contract import evaluate_contract, load_contract, load_run_for_evaluation
 from .local_server import run_local_server
 
 BANNER = r"""
@@ -614,6 +615,202 @@ def start(
         env["CEMI_SAVE_DIR"] = save_dir
     env["CEMI_LOCAL_SERVER_URL"] = gateway_url
     raise SystemExit(subprocess.call(cmd_list, env=env))
+
+
+def _resolve_run_jsonl(run_ref: str, save_dir: str | None) -> Path | None:
+    """
+    Resolve a run reference to a .jsonl path.
+
+    Accepts either:
+      - A direct path to a .jsonl file (absolute or relative).
+      - A run_id string, looked up as <save_dir>/runs/<run_id>.jsonl.
+    """
+    candidate = Path(run_ref).expanduser()
+    if candidate.suffix == ".jsonl" or candidate.is_file():
+        return candidate if candidate.is_file() else None
+    base = Path(save_dir or DEFAULT_SAVE_DIR).expanduser()
+    jsonl = base / "runs" / f"{run_ref}.jsonl"
+    return jsonl if jsonl.is_file() else None
+
+
+def _verdict_text(passed: bool) -> Text:
+    return Text("PASS", style="bold green") if passed else Text("FAIL", style="bold red")
+
+
+def _render_verify_table(
+    contract: dict,
+    run: dict,
+    overall_pass: bool,
+    gate_results: list,
+) -> None:
+    from rich.table import Table as RichTable
+
+    contract_name = contract.get("name") or contract.get("contract_id") or "contract"
+    run_id = run.get("id") or run.get("run_id") or "?"
+
+    _console.print()
+    _console.print(Text("Contract: ", style="dim") + Text(contract_name, style="cyan bold"))
+    _console.print(Text("Run:      ", style="dim") + Text(run_id, style="white"))
+    _console.print()
+
+    table = RichTable(show_header=True, header_style="bold", box=None, padding=(0, 2))
+    table.add_column("Gate", style="white")
+    table.add_column("Role", style="dim")
+    table.add_column("Metric", style="white")
+    table.add_column("Actual", justify="right")
+    table.add_column("Status", justify="center")
+    table.add_column("Detail", style="dim")
+
+    for g in gate_results:
+        actual = g.get("run_value")
+        actual_str = f"{actual:.6g}" if isinstance(actual, (int, float)) else "—"
+        table.add_row(
+            g.get("id", ""),
+            g.get("role", ""),
+            g.get("metric", {}).get("name", "") if isinstance(g.get("metric"), dict) else "",
+            actual_str,
+            _verdict_text(bool(g.get("pass"))),
+            g.get("explain", "") if not g.get("pass") else "",
+        )
+
+    _console.print(table)
+    _console.print()
+
+    if overall_pass:
+        _console.print(Text("Verdict: ", style="bold") + Text("PASS", style="bold green") + Text(" — all gates satisfied.", style="dim"))
+    else:
+        failed_count = sum(1 for g in gate_results if not g.get("pass"))
+        _console.print(
+            Text("Verdict: ", style="bold")
+            + Text("FAIL", style="bold red")
+            + Text(f" — {failed_count} gate(s) failed.", style="dim")
+        )
+    _console.print()
+
+
+@app.command()
+@click.option(
+    "--contract",
+    "contract_path",
+    required=True,
+    type=click.Path(exists=True),
+    help="Path to a contract JSON file.",
+)
+@click.option(
+    "--run",
+    "run_ref",
+    required=True,
+    help="Run ID (resolved from --save-dir) or direct path to a .jsonl file.",
+)
+@click.option(
+    "--save-dir",
+    default=None,
+    type=click.Path(exists=False, path_type=str),
+    help="Save directory to search for runs/ (default: .cemi).",
+)
+@click.option(
+    "--output",
+    "output_fmt",
+    default="text",
+    type=click.Choice(["text", "json"]),
+    show_default=True,
+    help="Output format.",
+)
+@click.option(
+    "--output-file",
+    "output_file",
+    default=None,
+    type=click.Path(),
+    help="Write output to a file instead of stdout.",
+)
+def verify(
+    contract_path: str,
+    run_ref: str,
+    save_dir: str | None,
+    output_fmt: str,
+    output_file: str | None,
+) -> None:
+    """Evaluate a run against a contract and report pass/fail for each gate.
+
+    Exits 0 if all gates pass, 1 if any gate fails, 2 on input/parse error.
+
+    \b
+    Examples:
+      cemi verify --contract contract.json --run my-run-id
+      cemi verify --contract contract.json --run .cemi/runs/abc123.jsonl --output json
+    """
+    import json as _json
+    import sys
+
+    # Load contract
+    try:
+        contract = load_contract(contract_path)
+    except Exception as exc:
+        _console_err.print(Text(f"Error loading contract: {exc}", style="red"))
+        sys.exit(2)
+
+    # Resolve run path
+    run_path = _resolve_run_jsonl(run_ref, save_dir)
+    if run_path is None:
+        _console_err.print(
+            Text(f"Run not found: {run_ref!r}", style="red")
+            + Text(
+                f"\n  Looked in: {Path(save_dir or DEFAULT_SAVE_DIR).expanduser() / 'runs' / (run_ref + '.jsonl')}",
+                style="dim",
+            )
+        )
+        sys.exit(2)
+
+    # Load run
+    try:
+        run = load_run_for_evaluation(run_path)
+    except Exception as exc:
+        _console_err.print(Text(f"Error loading run: {exc}", style="red"))
+        sys.exit(2)
+
+    if run is None:
+        _console_err.print(Text(f"No valid run_record found in: {run_path}", style="red"))
+        sys.exit(2)
+
+    # Evaluate
+    try:
+        result = evaluate_contract(runs=[run], contract=contract)
+    except Exception as exc:
+        _console_err.print(Text(f"Error evaluating contract: {exc}", style="red"))
+        sys.exit(2)
+
+    run_result = result["results"][0] if result.get("results") else {}
+    overall_pass = bool(run_result.get("pass"))
+    gate_results = run_result.get("gate_results") or []
+
+    if output_fmt == "json":
+        out = {
+            "contract_id": contract.get("contract_id", "contract"),
+            "run_id": run.get("id"),
+            "verdict": "pass" if overall_pass else "fail",
+            "generated_at": result.get("generated_at"),
+            "gates": [
+                {
+                    "id": g["id"],
+                    "role": g["role"],
+                    "metric": g["metric"]["name"] if isinstance(g.get("metric"), dict) else "",
+                    "verdict": "pass" if g["pass"] else "fail",
+                    "run_value": g["run_value"],
+                    "explain": g["explain"],
+                }
+                for g in gate_results
+            ],
+        }
+        text = _json.dumps(out, indent=2)
+        if output_file:
+            Path(output_file).write_text(text, encoding="utf-8")
+            _console.print(Text(f"Wrote result to {output_file}", style="dim"))
+        else:
+            click.echo(text)
+    else:
+        _render_verify_table(contract, run, overall_pass, gate_results)
+
+    sys.exit(0 if overall_pass else 1)
 
 
 def main_entry() -> None:
