@@ -212,6 +212,14 @@ const rawRunsData = [
       "gpu": null
     },
     "artifacts": [],
+    "contract_result": {
+      "pass": true,
+      "run_id": "run-ic-ptq-resnet18-int8",
+      "gate_results": [
+        { "id": "accuracy_gate", "role": "quality", "metric": { "name": "accuracy" }, "run_value": 0.9299, "pass": true },
+        { "id": "latency_gate", "role": "performance", "metric": { "name": "latency_ms" }, "run_value": 13.3, "pass": true }
+      ]
+    },
     "params": [
       {
         "id": "param-run-ic-ptq-resnet18-int8-01",
@@ -1752,6 +1760,14 @@ const rawRunsData = [
       "gpu": null
     },
     "artifacts": [],
+    "contract_result": {
+      "pass": false,
+      "run_id": "run-ic-ptq-mobilenetv2-int8",
+      "gate_results": [
+        { "id": "accuracy_gate", "role": "quality", "metric": { "name": "accuracy" }, "run_value": 0.9242, "pass": false, "explain": "value 0.9242 < min 0.93" },
+        { "id": "latency_gate", "role": "performance", "metric": { "name": "latency_ms" }, "run_value": 15.1, "pass": true }
+      ]
+    },
     "params": [
       {
         "id": "param-run-ic-ptq-mobilenetv2-int8-01",
@@ -5448,6 +5464,14 @@ const rawRunsData = [
       "gpu": null
     },
     "artifacts": [],
+    "contract_result": {
+      "pass": true,
+      "run_id": "run-ic-qat-resnet18-int8",
+      "gate_results": [
+        { "id": "accuracy_gate", "role": "quality", "metric": { "name": "accuracy" }, "run_value": 0.9109, "pass": true },
+        { "id": "latency_gate", "role": "performance", "metric": { "name": "latency_ms" }, "run_value": 11.53, "pass": true }
+      ]
+    },
     "params": [
       {
         "id": "param-run-ic-qat-resnet18-int8-01",
