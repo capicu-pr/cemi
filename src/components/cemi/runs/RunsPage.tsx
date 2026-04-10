@@ -1,13 +1,20 @@
 import React, { useMemo, useState } from "react";
 import { Page } from "../layout/Page";
 import { AnimatePresence, motion } from "framer-motion";
-import { CheckCircle2, Circle, Eye, EyeOff, Search } from "lucide-react";
+import { CheckCircle2, Circle, Eye, EyeOff, Info, Search } from "lucide-react";
 import type { RunRecord } from "../../../types/domain";
 import { AnimatedInput, animationPresets, shadowPresets } from "../../ui/animated-interactive";
 import { ScrollArea, ScrollBar } from "../../ui/scroll-area";
 import { MetricWidget, WIDGET_RUN_COLORS } from "./widgets/MetricWidget";
 import { discoverMetricNames, runsToMetricWidgetData } from "./widgets/runMetricsToWidgetData";
 import { ContractBadge } from "./ContractBadge";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+} from "../../ui/dialog";
 
 const TABLE_HEADER_BACKGROUND = "rgba(15, 52, 85, 0.05)";
 const RUN_COLORS = ["#D82A2D", "#0F3455", "#A67C52", "#2D6A4F", "#6B4EFF", "#C65D2E"];
@@ -223,6 +230,7 @@ export function RunsPage({
 }: RunsPageProps) {
   const [hiddenChartRunIds, setHiddenChartRunIds] = useState<Set<string>>(new Set());
   const [chartRunQuery, setChartRunQuery] = useState("");
+  const [verifiedInfoOpen, setVerifiedInfoOpen] = useState(false);
   const displayMetricsByRun = runs.map((run) => getDisplayMetrics(run));
   const scalarMetricColumns = getScalarMetricColumns(displayMetricsByRun);
   const chartWidgets = useMemo(
@@ -483,7 +491,17 @@ export function RunsPage({
                         Status
                       </th>
                       <th style={{ padding: RUNS_TABLE_HEADER_PADDING, textAlign: "left", fontSize: "0.875rem", fontWeight: 600, color: "#0F3455", minWidth: RUNS_TABLE_COLUMN_MIN_WIDTH }}>
-                        Verified
+                        <div style={{ display: "flex", alignItems: "center", gap: "0.3rem" }}>
+                          Verified
+                          <button
+                            type="button"
+                            onClick={(e) => { e.stopPropagation(); setVerifiedInfoOpen(true); }}
+                            className="inline-flex items-center justify-center rounded-full p-0.5 text-[rgba(15,52,85,0.45)] transition-colors hover:bg-[rgba(15,52,85,0.08)] hover:text-[#0F3455]"
+                            aria-label="What does Verified mean?"
+                          >
+                            <Info className="h-3.5 w-3.5" />
+                          </button>
+                        </div>
                       </th>
                       <th style={{ padding: RUNS_TABLE_HEADER_PADDING, textAlign: "left", fontSize: "0.875rem", fontWeight: 600, color: "#0F3455", minWidth: RUNS_TABLE_COLUMN_MIN_WIDTH }}>
                         Last edited
@@ -527,6 +545,37 @@ export function RunsPage({
           </div>
         )}
       </div>
+
+      <Dialog open={verifiedInfoOpen} onOpenChange={setVerifiedInfoOpen}>
+        <DialogContent className="sm:max-w-[480px]">
+          <DialogHeader>
+            <DialogTitle className="text-[#0F3455]">What does "Verified" mean?</DialogTitle>
+            <DialogDescription asChild>
+              <div className="space-y-3 text-sm text-[rgba(15,52,85,0.75)]">
+                <p>
+                  A run is <strong className="text-[#0F3455]">Verified</strong> when it has been checked against a
+                  contract — a set of minimum requirements your model must meet before it is
+                  considered ready to deploy.
+                </p>
+                <p>
+                  Each requirement is called a <strong className="text-[#0F3455]">gate</strong>. A gate might say:
+                  "accuracy must be at least 90%" or "inference latency must stay under 20 ms."
+                  The run's recorded values are compared against every gate.
+                </p>
+                <ul className="space-y-1 pl-4 list-disc">
+                  <li><span className="text-green-700 font-semibold">✓ PASS</span> — every gate was satisfied.</li>
+                  <li><span className="text-red-700 font-semibold">✗ FAIL</span> — at least one gate was not met.</li>
+                  <li><span className="text-[rgba(15,52,85,0.5)]">—</span> — the run has not been verified yet.</li>
+                </ul>
+                <p>
+                  Verification is run with <code className="font-mono bg-[rgba(15,52,85,0.06)] px-1 py-0.5 rounded text-xs">cemi verify</code> and
+                  the full gate-by-gate breakdown is visible in the run's Results tab.
+                </p>
+              </div>
+            </DialogDescription>
+          </DialogHeader>
+        </DialogContent>
+      </Dialog>
     </Page>
   );
 }
