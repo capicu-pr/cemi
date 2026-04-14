@@ -9,7 +9,8 @@ import {
   shadowPresets,
 } from "../../components/ui/animated-interactive";
 import { Button } from "../../components/ui/button";
-import { getDevProjects, mergeProjectsWithDevDefaults } from "../../mocks/defaultWorkspace";
+import { mergeProjectsWithDevDefaults } from "../../mocks/defaultWorkspace";
+import { mockApiClient } from "../../mockData";
 
 interface WorkspacePageProps {
   onNavigate: (path: string) => void;
@@ -58,7 +59,8 @@ export function WorkspacePage({ onNavigate, onProjectSelect, onStartTour }: Work
     } catch (error) {
       console.error("Failed to load projects:", error);
       if (IS_DEV) {
-        const fallbackProjects = getDevProjects().map((p) => ({
+        const mockData = await mockApiClient.getProjects().catch(() => []);
+        const fallbackProjects = mergeProjectsWithDevDefaults(mockData).map((p: any) => ({
           ...p,
           owner: user?.name || user?.username || p.owner || "local",
           updated_at: p.updated_at || p.created_at,
@@ -347,7 +349,7 @@ export function WorkspacePage({ onNavigate, onProjectSelect, onStartTour }: Work
               zIndex: 9999,
               width: "min(28rem, calc(100vw - 2rem))",
               overflow: "hidden",
-              borderRadius: "1rem",
+              borderRadius: "0.5rem",
               border: "1px solid rgba(15, 52, 85, 0.12)",
               backgroundColor: "var(--cemi-surface-bg, #F9F5EA)",
               boxShadow: "0 24px 80px rgba(15, 52, 85, 0.18)",

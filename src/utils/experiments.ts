@@ -7,8 +7,15 @@ export interface ExperimentOption {
 }
 
 export function getExperimentName(run: RunRecord): string {
-  const experimentTag = run.tags.find((tag) => tag.key === "experiment");
-  if (experimentTag?.value?.trim()) return experimentTag.value.trim();
+  const rawTags = run.tags;
+  let experimentValue: string | undefined;
+  if (rawTags && typeof rawTags === "object" && !Array.isArray(rawTags)) {
+    const v = (rawTags as Record<string, unknown>)["experiment"];
+    if (typeof v === "string" && v.trim()) experimentValue = v.trim();
+  } else if (Array.isArray(rawTags)) {
+    experimentValue = rawTags.find((tag: any) => tag.key === "experiment")?.value?.trim();
+  }
+  if (experimentValue) return experimentValue;
 
   const nameParts = run.name?.split("/");
   if (nameParts && nameParts.length > 1 && nameParts[0]?.trim()) {

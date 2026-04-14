@@ -1,10 +1,12 @@
 import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { MLPlatformLayout } from "./layout/MLPlatformLayout";
 import { RunsPage } from "./runs/RunsPage";
+import { RunDetailPage } from "./runs/RunDetailPage";
 import { WorkspacePage } from "../../pages/workspace/WorkspacePage";
 import { ComparePage } from "../../pages/compare/ComparePage";
 import { ConsolePage } from "../../pages/console/ConsolePage";
 import { apiClient } from "../../api/client";
+import { mockApiClient } from "../../mockData";
 import type { RunRecord } from "../../types/domain";
 import {
   buildCemiRunsUrl,
@@ -24,6 +26,7 @@ import {
 import { createCemiTourController } from "../../tour/driverTour";
 import { WorkspaceThemeProvider } from "../../contexts/WorkspaceThemeContext";
 import { getWorkspaceThemeCssVars } from "../../utils/workspaceThemeCssVars";
+import { resolveRunRecordId } from "../../utils/runHelpers";
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL || "http://127.0.0.1:3141";
 const IS_LOCAL_API = !API_BASE.trim() || isLocalHostUrl(API_BASE);
@@ -65,6 +68,8 @@ export function MLPlatformDashboard({ onNavigate }: MLPlatformDashboardProps) {
   const [runs, setRuns] = useState<RunRecord[]>([]);
   const [runsLoading, setRunsLoading] = useState(false);
   const [usingDevData, setUsingDevData] = useState(false);
+  const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
+  const runDetailReturnPathRef = useRef<string>("/workspace/runs");
   const projectsRef = useRef(projects);
   const runsRef = useRef(runs);
   const tourControllerRef = useRef<ReturnType<typeof createCemiTourController> | null>(null);
@@ -154,6 +159,7 @@ export function MLPlatformDashboard({ onNavigate }: MLPlatformDashboardProps) {
 
       const transformedRuns: RunRecord[] = (data || []).map((run: any) => ({
         ...run,
+        id: run.id ?? run.run_id,
         tags: Array.isArray(run.tags)
           ? run.tags
           : run.tags && typeof run.tags === "object"
@@ -173,7 +179,13 @@ export function MLPlatformDashboard({ onNavigate }: MLPlatformDashboardProps) {
       console.error("Failed to load runs:", error);
       if (IS_DEV) {
         setUsingDevData(true);
-        setRuns(getDevRuns(DEFAULT_DUMMY_PROJECT_ID));
+        // Prefer mock data for the requested project before falling back to dummy data.
+        const mockRuns = await mockApiClient.getRuns(projectId).catch(() => null);
+        if (mockRuns && mockRuns.length > 0) {
+          setRuns(mockRuns as RunRecord[]);
+        } else {
+          setRuns(getDevRuns(DEFAULT_DUMMY_PROJECT_ID));
+        }
       } else if (!silent) {
         setRuns([]);
       }
@@ -189,7 +201,8 @@ export function MLPlatformDashboard({ onNavigate }: MLPlatformDashboardProps) {
     } catch (error) {
       console.error("Failed to load projects:", error);
       if (IS_DEV) {
-        setProjects(getDevProjects());
+        const mockProjects = await mockApiClient.getProjects().catch(() => null);
+        setProjects(mergeProjectsWithDevDefaults(mockProjects ?? []));
       }
     }
   };
@@ -199,20 +212,12 @@ export function MLPlatformDashboard({ onNavigate }: MLPlatformDashboardProps) {
     const normalizedPath =
       url.pathname.endsWith("/") && url.pathname !== "/" ? url.pathname.slice(0, -1) : url.pathname;
 
-    if (normalizedPath === "/workspace/runs") {
-      if (url.search) {
-        window.history.replaceState({}, "", "/workspace/runs");
+    if (normalizedPath === "/workspace/runs" || normalizedPath.startsWith("/workspace/runs/")) {
+      const runId = url.searchParams.get("runId");
+      setSelectedRunId(runId);
+      if (normalizedPath.startsWith("/workspace/runs/")) {
+        window.history.replaceState({}, "", runId ? `/workspace/runs?runId=${runId}` : "/workspace/runs");
       }
-      setRouteState((prev) => ({
-        ...prev,
-        path: "/workspace/runs",
-        consoleRunId: null,
-      }));
-      return;
-    }
-
-    if (normalizedPath.startsWith("/workspace/runs/")) {
-      window.history.replaceState({}, "", "/workspace/runs");
       setRouteState((prev) => ({
         ...prev,
         path: "/workspace/runs",
@@ -326,8 +331,24 @@ export function MLPlatformDashboard({ onNavigate }: MLPlatformDashboardProps) {
   };
 
   const openRunDetail = (run: RunRecord) => {
-    const runIdKey = run.name || run.id.slice(0, 8);
-    handleNavigate(buildCemiRunsUrl({ runId: run.id, runIdKey }));
+    const id = resolveRunRecordId(run);
+    if (!id) {
+      console.warn("openRunDetail: run has no id/run_id", run);
+      return;
+    }
+    const label = (run.name && String(run.name).trim()) || id.slice(0, 8);
+    runDetailReturnPathRef.current = routeState.path;
+    setSelectedRunId(id);
+    handleNavigate(buildCemiRunsUrl({ runId: id, runIdKey: label }));
+  };
+
+  const closeRunDetail = () => {
+    const returnPath = runDetailReturnPathRef.current;
+    runDetailReturnPathRef.current = "/workspace/runs";
+    setSelectedRunId(null);
+    const target = returnPath === "/workspace/charts" ? "/workspace/charts" : "/workspace/runs";
+    window.history.replaceState({}, "", target);
+    updateRouteFromUrl(target);
   };
 
   useEffect(() => {
@@ -381,7 +402,11 @@ export function MLPlatformDashboard({ onNavigate }: MLPlatformDashboardProps) {
   }, [runs, selectedExperiment]);
   const compareRunIds = useMemo(() => new Set(routeState.compareRunIds), [routeState.compareRunIds]);
   const compareRuns = useMemo(
-    () => runs.filter((run) => compareRunIds.has(run.id)),
+    () =>
+      runs.filter((run) => {
+        const id = resolveRunRecordId(run);
+        return id ? compareRunIds.has(id) : false;
+      }),
     [compareRunIds, runs]
   );
   const runningCount = useMemo(
@@ -394,7 +419,13 @@ export function MLPlatformDashboard({ onNavigate }: MLPlatformDashboardProps) {
       switch (routeState.path) {
         case "/workspace":
           return <WorkspacePage onNavigate={handleNavigate} onProjectSelect={openProject} onStartTour={startTour} />;
-        case "/workspace/runs":
+        case "/workspace/runs": {
+          const selectedRun = selectedRunId
+            ? (runs.find((r) => resolveRunRecordId(r) === selectedRunId) ?? null)
+            : null;
+          if (selectedRunId && selectedRun) {
+            return <RunDetailPage run={selectedRun} allRuns={runs} onBack={closeRunDetail} />;
+          }
           return (
             <RunsPage
               projectId={currentProject || ""}
@@ -405,10 +436,12 @@ export function MLPlatformDashboard({ onNavigate }: MLPlatformDashboardProps) {
               compareRunIds={compareRunIds}
               onToggleCompare={toggleCompareRun}
               onOpenCompare={openCompareView}
+              onRunClick={openRunDetail}
               isLoading={runsLoading}
               view="runs"
             />
           );
+        }
         case "/workspace/charts":
           return (
             <RunsPage
@@ -420,6 +453,7 @@ export function MLPlatformDashboard({ onNavigate }: MLPlatformDashboardProps) {
               compareRunIds={compareRunIds}
               onToggleCompare={toggleCompareRun}
               onOpenCompare={openCompareView}
+              onRunClick={openRunDetail}
               isLoading={runsLoading}
               view="charts"
               onRefresh={() => currentProject && loadRuns(currentProject)}

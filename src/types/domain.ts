@@ -101,6 +101,53 @@ export interface RunActionEvent {
   run_name?: string;
 }
 
+export interface MonitorState {
+  state: "NOMINAL" | "WARN" | "REQUALIFY";
+  cusum_statistic: number;
+  adwin_window_mean: number | null;
+  adwin_window_size: number;
+  n_samples: number;
+}
+
+export interface InferenceEvent {
+  loss_value: number;
+  timestamp_ms: number;
+  input_hash?: string;
+  output_hash?: string;
+  step?: number;
+  [key: string]: unknown;
+}
+
+export interface PlatformFingerprint {
+  runtime: string;
+  hardware_backend: string;
+  simd_flags?: string[];
+  framework_version?: string;
+  recorded_at?: ISODateTime;
+  [key: string]: unknown;
+}
+
+export interface EQCAssignment {
+  eqc_id: string;
+  reference_runtime: string;
+  reference_hardware: string;
+  output_delta_norm: number;
+  delta_within_tolerance: boolean;
+  tolerance?: number;
+  recorded_at?: ISODateTime;
+  [key: string]: unknown;
+}
+
+export interface AccuracyGate {
+  metric_name: string;
+  metric_value: number;
+  threshold: number;
+  direction: "higher_is_better" | "lower_is_better" | string;
+  pass: boolean;
+  recorded_at?: ISODateTime;
+  [key: string]: unknown;
+}
+
 export interface ContractGateResult {
   id: string;
   role: string;
@@ -145,6 +192,11 @@ export interface Run {
   metrics?: RunMetricEvent[] | { events?: RunMetricEvent[]; summary?: RunMetricEvent[] };
   action_events?: RunActionEvent[];
   contract_result?: ContractResult;
+  platform_fingerprint?: PlatformFingerprint;
+  eqc_assignment?: EQCAssignment;
+  accuracy_gate?: AccuracyGate;
+  monitor_state?: MonitorState;
+  inference_events?: InferenceEvent[];
 }
 
 export interface RunRecord extends Run {}
