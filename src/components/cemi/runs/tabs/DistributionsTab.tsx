@@ -44,7 +44,16 @@ export function DistributionsTab({ run }: DistributionsTabProps) {
             <CartesianGrid strokeDasharray="3 3" />
             <XAxis dataKey="bin" />
             <YAxis />
-            <Tooltip />
+            <Tooltip
+              contentStyle={{
+                backgroundColor: "var(--cemi-hovercard-bg, #0F3455)",
+                border: "1px solid rgba(255,255,255,0.14)",
+                borderRadius: "10px",
+                boxShadow: "0 10px 28px rgba(15,52,85,0.22)",
+              }}
+              labelStyle={{ color: "var(--cemi-hovercard-fg, #F9F5EA)", fontWeight: 600 }}
+              itemStyle={{ color: "var(--cemi-hovercard-fg, #F9F5EA)" }}
+            />
             <Legend />
             <Bar dataKey="count" fill="#0F3455" name="Count" />
           </BarChart>

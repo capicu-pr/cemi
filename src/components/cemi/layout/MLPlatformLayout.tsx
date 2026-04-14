@@ -3,6 +3,7 @@ import { ArrowLeft, Activity, Play, GitCompare, Terminal } from "lucide-react";
 import { BottomDock } from "./BottomDock";
 import { theme } from "../../../theme";
 import type { ExperimentOption } from "../../../utils/experiments";
+import { getWorkspaceThemeCssVars } from "../../../utils/workspaceThemeCssVars";
 import { Tabs, TabsList, TabsTrigger } from "../../ui/tabs";
 
 interface MLPlatformLayoutProps {
@@ -45,19 +46,21 @@ export function MLPlatformLayout({
   onExperimentChange,
 }: MLPlatformLayoutProps) {
   const showProjectShell = Boolean(currentProject && currentPath !== "/workspace");
-  const workspaceSurfaceColor = toolThemeMode === "light" ? "#FFFFFF" : theme.colors.beige.lightest;
-  const dockSurfaceColor =
-    toolThemeMode === "light" ? "rgba(255, 255, 255, 0.92)" : "rgba(249, 245, 234, 0.88)";
-  const workspaceThemeVars = {
-    "--cemi-surface-bg": workspaceSurfaceColor,
-    "--cemi-dock-bg": dockSurfaceColor,
-  } as React.CSSProperties;
+  const { workspaceSurfaceColor, cssVars } = getWorkspaceThemeCssVars(toolThemeMode);
+  const workspaceThemeVars = cssVars as React.CSSProperties;
 
   const resolvedProjectName =
     currentProjectName || projects.find((project) => project.id === currentProject)?.name || currentProject || "Project";
 
   if (showProjectShell) {
     const tabsValue = currentPath;
+    const chartsWorkspaceShell = currentPath === "/workspace/charts";
+    const runsTabNoDock = currentPath === "/workspace/runs";
+    const mainBottomPaddingClass = chartsWorkspaceShell
+      ? "pb-28 sm:pb-28"
+      : runsTabNoDock
+        ? "pb-4 sm:pb-4"
+        : "pb-28 sm:pb-28";
 
     return (
       <div
@@ -68,9 +71,21 @@ export function MLPlatformLayout({
           ...workspaceThemeVars,
         }}
       >
-        <div className="flex min-h-screen min-w-0 flex-col">
-          <main className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden px-4 py-4 pb-28 sm:px-6 sm:py-4 sm:pb-28">
-            <div className="mx-auto flex min-h-0 min-w-0 w-full max-w-[1180px] flex-col">
+        <div className="flex h-screen min-w-0 flex-col">
+          <main
+            className={
+              chartsWorkspaceShell
+                ? `flex flex-1 min-h-0 flex-col overflow-x-clip overflow-y-hidden px-4 py-4 sm:px-6 sm:py-4 ${mainBottomPaddingClass}`
+                : `flex-1 min-h-0 overflow-x-clip overflow-y-auto px-4 py-4 sm:px-6 sm:py-4 ${mainBottomPaddingClass}`
+            }
+          >
+            <div
+              className={
+                chartsWorkspaceShell
+                  ? "mx-auto flex min-h-0 min-w-0 w-full max-w-[1180px] flex-1 flex-col"
+                  : "mx-auto flex min-h-0 min-w-0 w-full max-w-[1180px] flex-col"
+              }
+            >
               <div className="mb-2 flex flex-wrap items-center gap-3">
                 <div className="flex min-w-0 items-center gap-2">
                   <button
@@ -93,35 +108,44 @@ export function MLPlatformLayout({
                 className="mb-4"
               >
                 <TabsList variant="line" className="overflow-x-auto" data-tour="project-tabs">
-                  <TabsTrigger value="/workspace/runs" data-tour="tab-runs">
-                    <Play className="h-4 w-4" />
-                    Runs
-                  </TabsTrigger>
-                  <TabsTrigger value="/workspace/charts">
-                    <Activity className="h-4 w-4" />
-                    Charts
-                  </TabsTrigger>
-                  <TabsTrigger value="/workspace/compare" data-tour="tab-compare">
-                    <GitCompare className="h-4 w-4" />
-                    Compare
-                  </TabsTrigger>
-                  <TabsTrigger value="/workspace/console" data-tour="tab-console">
-                    <Terminal className="h-4 w-4" />
-                    Console
-                  </TabsTrigger>
+                  {[
+                    { value: "/workspace/runs", label: "Runs", icon: <Play className="h-4 w-4" />, tour: "tab-runs" },
+                    { value: "/workspace/charts", label: "Charts", icon: <Activity className="h-4 w-4" /> },
+                    { value: "/workspace/compare", label: "Compare", icon: <GitCompare className="h-4 w-4" />, tour: "tab-compare" },
+                    { value: "/workspace/console", label: "Console", icon: <Terminal className="h-4 w-4" />, tour: "tab-console" },
+                  ].map(({ value, label, icon, tour }) => {
+                    const isActive = tabsValue === value;
+                    return (
+                      <TabsTrigger
+                        key={value}
+                        value={value}
+                        data-tour={tour}
+                        style={isActive ? { color: "#D82A2D", borderBottomColor: "#D82A2D" } : undefined}
+                      >
+                        {icon}
+                        {label}
+                      </TabsTrigger>
+                    );
+                  })}
                 </TabsList>
               </Tabs>
-              {children}
+              {chartsWorkspaceShell ? (
+                <div className="flex min-h-0 flex-1 flex-col overflow-hidden">{children}</div>
+              ) : (
+                children
+              )}
             </div>
           </main>
         </div>
-        <BottomDock
-          currentPath={currentPath}
-          onNavigate={onNavigate}
-          toolThemeMode={toolThemeMode}
-          onToolThemeModeChange={onToolThemeModeChange}
-          hasSelectedWorkspace
-        />
+        {!runsTabNoDock && (
+          <BottomDock
+            currentPath={currentPath}
+            onNavigate={onNavigate}
+            toolThemeMode={toolThemeMode}
+            onToolThemeModeChange={onToolThemeModeChange}
+            hasSelectedWorkspace
+          />
+        )}
       </div>
     );
   }

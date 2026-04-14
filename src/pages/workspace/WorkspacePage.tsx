@@ -9,7 +9,8 @@ import {
   shadowPresets,
 } from "../../components/ui/animated-interactive";
 import { Button } from "../../components/ui/button";
-import { getDevProjects, mergeProjectsWithDevDefaults } from "../../mocks/defaultWorkspace";
+import { mergeProjectsWithDevDefaults } from "../../mocks/defaultWorkspace";
+import { mockApiClient } from "../../mockData";
 
 interface WorkspacePageProps {
   onNavigate: (path: string) => void;
@@ -58,7 +59,8 @@ export function WorkspacePage({ onNavigate, onProjectSelect, onStartTour }: Work
     } catch (error) {
       console.error("Failed to load projects:", error);
       if (IS_DEV) {
-        const fallbackProjects = getDevProjects().map((p) => ({
+        const mockData = await mockApiClient.getProjects().catch(() => []);
+        const fallbackProjects = mergeProjectsWithDevDefaults(mockData).map((p: any) => ({
           ...p,
           owner: user?.name || user?.username || p.owner || "local",
           updated_at: p.updated_at || p.created_at,
@@ -237,8 +239,25 @@ export function WorkspacePage({ onNavigate, onProjectSelect, onStartTour }: Work
             animate={{ opacity: 1, y: 0 }}
             className="p-12 text-center"
           >
-            <p className="text-[#D82A2D] mb-4">Failed to load projects.</p>
-            <p className="text-sm text-[rgba(15,52,85,0.7)] mb-4">{loadError}</p>
+            {/failed to fetch|networkerror|network request failed/i.test(loadError) ? (
+              <>
+                <p className="text-[#D82A2D] mb-2 font-medium">Gateway not reachable</p>
+                <p className="text-sm text-[rgba(15,52,85,0.7)] mb-3">
+                  The local gateway isn't running. Start it in your terminal:
+                </p>
+                <code className="inline-block mb-5 px-4 py-2 rounded-lg bg-[rgba(15,52,85,0.07)] text-[#0F3455] text-sm font-mono border border-[rgba(15,52,85,0.12)]">
+                  cemi gateway
+                </code>
+                <p className="text-xs text-[rgba(15,52,85,0.5)] mb-5">
+                  Then click Retry or refresh the page.
+                </p>
+              </>
+            ) : (
+              <>
+                <p className="text-[#D82A2D] mb-2 font-medium">Failed to load projects.</p>
+                <p className="text-sm text-[rgba(15,52,85,0.7)] mb-5">{loadError}</p>
+              </>
+            )}
             <button
               type="button"
               onClick={() => loadProjects()}
@@ -347,7 +366,7 @@ export function WorkspacePage({ onNavigate, onProjectSelect, onStartTour }: Work
               zIndex: 9999,
               width: "min(28rem, calc(100vw - 2rem))",
               overflow: "hidden",
-              borderRadius: "1rem",
+              borderRadius: "0.5rem",
               border: "1px solid rgba(15, 52, 85, 0.12)",
               backgroundColor: "var(--cemi-surface-bg, #F9F5EA)",
               boxShadow: "0 24px 80px rgba(15, 52, 85, 0.18)",

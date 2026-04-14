@@ -92,9 +92,10 @@ function ChartWidget({
   return (
     <div
       className={`
-        bg-white border border-[rgba(15,52,85,0.1)] rounded-lg overflow-hidden
+        border border-[rgba(15,52,85,0.1)] rounded-lg overflow-hidden
         ${layout === "row" ? "col-span-full" : ""}
       `}
+      style={{ backgroundColor: "var(--cemi-surface-bg, #F9F5EA)" }}
       onMouseEnter={() => setIsHovered(true)}
       onMouseLeave={() => setIsHovered(false)}
     >
@@ -166,11 +167,14 @@ function ChartWidget({
             />
             <Tooltip
               contentStyle={{
-                backgroundColor: "#fff",
-                border: "1px solid rgba(15,52,85,0.2)",
-                borderRadius: "4px",
+                backgroundColor: "var(--cemi-hovercard-bg, #0F3455)",
+                border: "1px solid rgba(255,255,255,0.14)",
+                borderRadius: "8px",
                 fontSize: "12px",
+                boxShadow: "0 10px 28px rgba(15,52,85,0.22)",
               }}
+              labelStyle={{ color: "var(--cemi-hovercard-fg, #F9F5EA)", fontWeight: 600 }}
+              itemStyle={{ color: "var(--cemi-hovercard-fg, #F9F5EA)" }}
             />
             <Line
               type="linear"
@@ -336,7 +340,8 @@ export function ChartsTab({ run, baselineRun }: ChartsTabProps) {
           onClick={() => setFullscreenMetric(null)}
         >
           <div
-            className="bg-white rounded-lg shadow-xl w-full max-w-4xl"
+            className="rounded-lg shadow-xl w-full max-w-4xl"
+            style={{ backgroundColor: "var(--cemi-surface-bg, #F9F5EA)" }}
             onClick={(e) => e.stopPropagation()}
           >
             {/* Modal header */}
@@ -383,10 +388,13 @@ export function ChartsTab({ run, baselineRun }: ChartsTabProps) {
                   />
                   <Tooltip
                     contentStyle={{
-                      backgroundColor: "#fff",
-                      border: "1px solid rgba(15,52,85,0.2)",
-                      borderRadius: "4px",
+                      backgroundColor: "var(--cemi-hovercard-bg, #0F3455)",
+                      border: "1px solid rgba(255,255,255,0.14)",
+                      borderRadius: "8px",
+                      boxShadow: "0 10px 28px rgba(15,52,85,0.22)",
                     }}
+                    labelStyle={{ color: "var(--cemi-hovercard-fg, #F9F5EA)", fontWeight: 600 }}
+                    itemStyle={{ color: "var(--cemi-hovercard-fg, #F9F5EA)" }}
                   />
                   <Legend />
                   <Line

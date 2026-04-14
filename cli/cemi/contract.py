@@ -472,3 +472,63 @@ def evaluate_contract(runs: list[Mapping[str, Any]], contract: Mapping[str, Any]
         "results": evaluated,
     }
 
+
+def load_run_for_evaluation(path: str | Path) -> Optional[Dict[str, Any]]:
+    """
+    Load the latest run_record payload from a JSONL file, normalized for evaluate_contract().
+
+    Handles both v2 payloads (run_id, metrics.events/summary) and v1 legacy payloads (id,
+    summary_metrics dict).  Returns None if no valid run_record is found.
+    """
+    p = Path(path).expanduser()
+    if not p.is_file():
+        return None
+    text = p.read_text(encoding="utf-8").strip()
+    if not text:
+        return None
+
+    last_payload: Optional[Dict[str, Any]] = None
+    for line in text.splitlines():
+        if not line.strip():
+            continue
+        try:
+            event = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if event.get("type") != "run_record":
+            continue
+        payload = event.get("payload")
+        if isinstance(payload, dict):
+            last_payload = payload
+
+    if not last_payload:
+        return None
+
+    out = dict(last_payload)
+
+    # evaluate_contract() uses run.get("id"); v2 payloads carry run_id instead.
+    if not isinstance(out.get("id"), str):
+        rid = out.get("run_id")
+        if isinstance(rid, str):
+            out["id"] = rid
+
+    # Build summary_metrics dict from v2 metrics.summary list so source="summary_metrics" gates work.
+    if not isinstance(out.get("summary_metrics"), dict):
+        metrics_obj = out.get("metrics")
+        if isinstance(metrics_obj, dict):
+            sm: Dict[str, Any] = {}
+            for m in metrics_obj.get("summary") or []:
+                if not isinstance(m, dict):
+                    continue
+                n, v = m.get("name"), m.get("value")
+                if isinstance(n, str) and isinstance(v, (int, float)) and not isinstance(v, bool):
+                    sm[n] = float(v)
+            out["summary_metrics"] = sm
+
+    # Flatten v2 metrics dict to events list so source="metrics" p-quantile gates work.
+    metrics_raw = out.get("metrics")
+    if isinstance(metrics_raw, dict):
+        out["metrics"] = metrics_raw.get("events") or []
+
+    return out
+

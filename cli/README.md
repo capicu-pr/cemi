@@ -4,7 +4,7 @@
    <p align="center">
       <img alt="Tests" src="https://img.shields.io/badge/Tests-Passing-green?logo=github">
       <img alt="Python" src="https://img.shields.io/badge/Python-3.9%2B-blue?logo=python">
-      <img alt="Platform" src="https://img.shields.io/badge/PyPI%20Package-v0.0.1-green?logo=pypi">
+      <img alt="Platform" src="https://img.shields.io/badge/PyPI%20Package-v0.1.2-green?logo=pypi">
       <img alt="Stars" src="https://img.shields.io/github/stars/capicu-pr/cemi">
       <img alt="Forks" src="https://img.shields.io/github/forks/capicu-pr/cemi">
    </p>
@@ -56,37 +56,48 @@ pytest cli/tests/ -q
 ```
 
 ## Quickstart
-### Minimal example
+
+### Instrument your script
 
 ```python
 from cemi.writer import create_writer
 
 writer = create_writer(project="demo", log_dir=".cemi")
-writer.start_run(name="baseline")
-writer.log_parameter(key="learning_rate", value=0.001)
-writer.log_metric(name="loss", value=0.42, step=1)
-writer.log_summary_metrics({"final_accuracy": 0.95})
-writer.emit_run_record()
-writer.end_run(status="succeeded")
-writer.emit_run_record()
+
+with writer.run("baseline") as run:
+    run.log_parameter(key="learning_rate", value=0.001)
+    run.log_metric(name="loss", value=0.42, step=1)
+    run.log_summary_metrics({"final_accuracy": 0.95})
+# run is automatically saved and closed on exit
 ```
 
-Start the local gateway:
+To stream live progress to the UI during a long training loop, call
+`run.emit_run_record()` periodically (e.g. once per epoch).
+
+### View your runs
+
+Start the local gateway and open the workspace:
 
 ```bash
-cemi gateway
+cemi gateway   # reads from .cemi/ by default
+cemi view      # opens http://127.0.0.1:3141/workspace in your browser
 ```
 
-Open the workspace:
-
-```bash
-cemi view
-```
-
-Or visit:
+Or visit directly:
 
 ```text
 http://127.0.0.1:3141/workspace
+```
+
+### Explicit lifecycle (advanced)
+
+If you need finer control over run boundaries:
+
+```python
+writer.start_run(name="baseline")
+writer.log_metric(name="loss", value=0.42, step=1)
+writer.emit_run_record()   # optional: stream progress mid-run
+writer.end_run()           # saves a final snapshot automatically
 ```
 
 ## Command Summary

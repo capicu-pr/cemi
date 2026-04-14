@@ -3,10 +3,12 @@ import { Page } from "../layout/Page";
 import { AnimatePresence, motion } from "framer-motion";
 import { CheckCircle2, Circle, Eye, EyeOff, Search } from "lucide-react";
 import type { RunRecord } from "../../../types/domain";
-import { AnimatedInput, animationPresets, shadowPresets } from "../../ui/animated-interactive";
-import { ScrollArea, ScrollBar } from "../../ui/scroll-area";
+import { Input } from "../../ui/input";
+import { animationPresets, shadowPresets } from "../../ui/animated-interactive";
 import { MetricWidget, WIDGET_RUN_COLORS } from "./widgets/MetricWidget";
 import { discoverMetricNames, runsToMetricWidgetData } from "./widgets/runMetricsToWidgetData";
+import { ContractBadge } from "./ContractBadge";
+import { VerifiedColumnHelp } from "./VerifiedColumnHelp";
 
 const TABLE_HEADER_BACKGROUND = "rgba(15, 52, 85, 0.05)";
 const RUN_COLORS = ["#D82A2D", "#0F3455", "#A67C52", "#2D6A4F", "#6B4EFF", "#C65D2E"];
@@ -44,11 +46,18 @@ function asRunShape(run: RunRecord): any {
 
 function getTagValue(run: RunRecord, key: string): string | null {
   const resolvedRun = asRunShape(run);
-  const tags = Array.isArray(resolvedRun.tags) ? resolvedRun.tags : [];
+  const rawTags = resolvedRun.tags;
   const params = Array.isArray(resolvedRun.params) ? resolvedRun.params : [];
 
-  const tagValue = tags.find((tag: any) => tag.key === key)?.value?.trim();
-  if (tagValue) return tagValue;
+  // Writer emits tags as a plain dict; mocks use [{key, value}] array — handle both.
+  if (rawTags && typeof rawTags === "object" && !Array.isArray(rawTags)) {
+    const v = (rawTags as Record<string, unknown>)[key];
+    if (typeof v === "string" && v.trim()) return v.trim();
+    if (typeof v === "number" || typeof v === "boolean") return String(v);
+  } else if (Array.isArray(rawTags)) {
+    const tagValue = rawTags.find((tag: any) => tag.key === key)?.value?.trim();
+    if (tagValue) return tagValue;
+  }
 
   const paramValue = params.find((param: any) => param.key === key)?.value;
   if (typeof paramValue === "string" && paramValue.trim()) return paramValue.trim();
@@ -132,7 +141,13 @@ function getDisplayMetrics(run: RunRecord): DisplayMetric[] {
     metrics.set(key, { key, value, source: "summary" });
   }
 
-  const rawMetrics = Array.isArray(resolvedRun.metrics) ? resolvedRun.metrics : [];
+  // Writer emits metrics as { events: [], summary: [] }; legacy mocks use a flat array.
+  const _m = resolvedRun.metrics;
+  const rawMetrics: any[] = Array.isArray(_m)
+    ? _m
+    : (_m && typeof _m === "object" && Array.isArray((_m as any).events))
+      ? (_m as any).events
+      : [];
   const latestEventMetrics = new Map<string, { value: number; sortValue: number; firstSeen: number }>();
 
   rawMetrics.forEach((metric: any, index: number) => {
@@ -220,7 +235,7 @@ export function RunsPage({
   view = "runs",
   onRefresh: _onRefresh,
 }: RunsPageProps) {
-  const [hiddenChartRunIds, setHiddenChartRunIds] = useState<Set<string>>(new Set());
+  const [hiddenChartRunIds, setHiddenChartRunIds] = useState(new Set<string>());
   const [chartRunQuery, setChartRunQuery] = useState("");
   const displayMetricsByRun = runs.map((run) => getDisplayMetrics(run));
   const scalarMetricColumns = getScalarMetricColumns(displayMetricsByRun);
@@ -270,14 +285,23 @@ export function RunsPage({
         runRow.id.toLowerCase().includes(query)
     );
   }, [chartRunQuery, chartRunRows]);
+  const chartsRoute = view === "charts";
+
   return (
-    <Page title="" subtitle="" fullWidth>
-      <div className="min-h-0 min-w-0" data-tour="runs-table">
+    <Page title="" subtitle="" fullWidth expandBody={chartsRoute}>
+      <div
+        className={chartsRoute ? "flex min-h-0 min-w-0 flex-1 flex-col" : "min-h-0 min-w-0"}
+        data-tour="runs-table"
+      >
         {isLoading ? (
           <motion.div
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
-            className="p-12 text-center text-[rgba(15,52,85,0.7)]"
+            className={
+              chartsRoute
+                ? "flex min-h-0 flex-1 flex-col items-center justify-center p-12 text-center text-[rgba(15,52,85,0.7)]"
+                : "p-12 text-center text-[rgba(15,52,85,0.7)]"
+            }
           >
             Loading runs...
           </motion.div>
@@ -285,7 +309,11 @@ export function RunsPage({
           <motion.div
             initial={{ opacity: 0, y: 10 }}
             animate={{ opacity: 1, y: 0 }}
-            className="p-12 text-center text-[rgba(15,52,85,0.7)]"
+            className={
+              chartsRoute
+                ? "flex min-h-0 flex-1 flex-col items-center justify-center p-12 text-center text-[rgba(15,52,85,0.7)]"
+                : "p-12 text-center text-[rgba(15,52,85,0.7)]"
+            }
           >
             {view === "charts"
               ? "No chart metrics logged yet. Logged time-series metrics will appear here."
@@ -296,129 +324,112 @@ export function RunsPage({
             <motion.div
               initial={{ opacity: 0, y: 10 }}
               animate={{ opacity: 1, y: 0 }}
-              className="flex min-h-[220px] items-center justify-center rounded-lg border border-[rgba(15,52,85,0.08)] bg-[#F9F5EA] text-sm text-[rgba(15,52,85,0.58)]"
+              className="flex min-h-0 flex-1 flex-col items-center justify-center rounded-lg border border-[rgba(15,52,85,0.08)] bg-[#F9F5EA] p-8 text-sm text-[rgba(15,52,85,0.58)]"
               style={{ boxShadow: shadowPresets.sm, backgroundColor: TOOL_SURFACE_BACKGROUND }}
             >
               No chart metrics logged yet.
             </motion.div>
           ) : (
-            <motion.div
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              className="flex w-full min-w-0 items-start gap-4"
-            >
-              <div
-                className="w-[224px] shrink-0 self-start overflow-hidden rounded-lg border border-[rgba(15,52,85,0.14)] bg-[#F9F5EA]"
-                style={{ boxShadow: shadowPresets.sm, backgroundColor: TOOL_SURFACE_BACKGROUND }}
+            <div className="flex min-h-0 w-full min-w-0 flex-1 overflow-hidden gap-4">
+              <aside
+                className="z-20 flex w-[120px] shrink-0 flex-col overflow-hidden rounded-2xl border border-[rgba(15,52,85,0.12)]"
+                style={{ boxShadow: shadowPresets.md ?? shadowPresets.sm, backgroundColor: TOOL_SURFACE_BACKGROUND }}
               >
-                <div className="border-b border-[rgba(15,52,85,0.12)] p-2">
-                  <AnimatedInput
-                    icon={<Search className="w-5 h-5" />}
-                    type="text"
-                    placeholder="Search runs..."
-                    value={chartRunQuery}
-                    onChange={(event) => setChartRunQuery(event.target.value)}
-                    aria-label="Search chart runs"
+                <div className="shrink-0 border-b border-[rgba(15,52,85,0.1)] px-2 pb-2 pt-2">
+                  <div
+                    className="mb-2"
                     style={{
-                      width: "100%",
-                      backgroundColor: TOOL_SURFACE_BACKGROUND,
+                      fontSize: "0.625rem",
+                      fontWeight: 700,
+                      letterSpacing: "0.1em",
+                      textTransform: "uppercase",
+                      color: "rgba(15,52,85,0.5)",
                     }}
-                  />
+                  >
+                    Runs
+                  </div>
+                  <div className="relative">
+                    <Search className="pointer-events-none absolute left-2 top-1/2 h-3 w-3 -translate-y-1/2 text-[rgba(15,52,85,0.5)]" />
+                    <Input
+                      type="text"
+                      placeholder="Search..."
+                      value={chartRunQuery}
+                      onChange={(event) => setChartRunQuery(event.target.value)}
+                      aria-label="Search chart runs"
+                      className="h-7 w-full pl-7 pr-2 text-[10px]"
+                      style={{ backgroundColor: TOOL_SURFACE_BACKGROUND }}
+                    />
+                  </div>
                 </div>
-                <table className="w-full border-collapse">
-                  <thead>
-                    <tr style={{ backgroundColor: TABLE_HEADER_BACKGROUND, borderBottom: "1px solid rgba(15, 52, 85, 0.12)" }}>
-                      <th style={{ width: "40px", padding: "0.75rem 0.95rem", textAlign: "center", fontSize: "0.78rem", fontWeight: 600, color: "#0F3455" }}>
-                        
-                      </th>
-                      <th style={{ padding: "0.75rem 0.95rem", textAlign: "left", fontSize: "0.78rem", fontWeight: 600, color: "#0F3455" }}>
-                        Name
-                      </th>
-                      <th style={{ padding: "0.75rem 0.95rem", textAlign: "left", fontSize: "0.78rem", fontWeight: 600, color: "#0F3455" }}>
-                        ID
-                      </th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {filteredChartRunRows.map((runRow, index) => (
-                      <tr
+                <div className="flex min-h-0 flex-1 flex-col overflow-y-auto overscroll-y-contain px-1 py-1">
+                  {filteredChartRunRows.map((runRow, index) => {
+                    const run = runs.find((r) => asRunShape(r).id === runRow.id || asRunShape(r).run_id === runRow.id);
+                    const monitorState = run ? (run as any).monitor_state?.state : null;
+                    return (
+                      <div
                         key={runRow.id}
+                        className="rounded cursor-pointer transition-colors hover:bg-[rgba(15,52,85,0.06)] active:bg-[rgba(15,52,85,0.1)]"
                         style={{
-                          borderTop: index === 0 ? "none" : "1px solid rgba(15, 52, 85, 0.08)",
+                          borderTop: index === 0 ? "none" : "1px solid rgba(15,52,85,0.08)",
+                          padding: "0.35rem 0.25rem",
+                          opacity: runRow.isVisible ? 1 : 0.5,
                         }}
+                        onClick={() => run && onRunClick?.(run)}
+                        title={runRow.name}
                       >
-                        <td style={{ padding: "0.5rem 0.1rem", textAlign: "center" }}>
+                        <div className="flex items-start gap-1">
                           <button
                             type="button"
-                            onClick={() =>
+                            onClick={(e) => {
+                              e.stopPropagation();
                               setHiddenChartRunIds((current) => {
                                 const next = new Set(current);
-                                if (next.has(runRow.id)) {
-                                  next.delete(runRow.id);
-                                } else {
-                                  next.add(runRow.id);
-                                }
+                                if (next.has(runRow.id)) next.delete(runRow.id);
+                                else next.add(runRow.id);
                                 return next;
-                              })
-                            }
-                            className="inline-flex items-center justify-center rounded-md p-1 transition-colors hover:bg-[rgba(15,52,85,0.06)]"
+                              });
+                            }}
+                            className="mt-0.5 inline-flex h-4 w-4 shrink-0 items-center justify-center rounded transition-colors hover:bg-[rgba(15,52,85,0.08)]"
                             aria-label={`${runRow.isVisible ? "Hide" : "Show"} ${runRow.name}`}
                           >
                             {runRow.isVisible ? (
-                              <Eye className="h-4 w-4" style={{ color: runRow.color }} />
+                              <Eye className="h-3 w-3" style={{ color: runRow.color }} />
                             ) : (
-                              <EyeOff className="h-4 w-4" style={{ color: runRow.color, opacity: 0.55 }} />
+                              <EyeOff className="h-3 w-3" style={{ color: runRow.color }} />
                             )}
                           </button>
-                        </td>
-                        <td style={{ padding: "0.5rem 0.1rem", minWidth: 0 }}>
                           <span
-                            className="block whitespace-normal break-words"
+                            className="min-w-0 flex-1 font-medium text-[#0F3455]"
                             style={{
-                              fontSize: "0.82rem",
-                              lineHeight: 1.2,
-                              fontWeight: 500,
-                              color: runRow.isVisible ? "#0F3455" : "rgba(15, 52, 85, 0.55)",
+                              fontSize: "0.625rem",
+                              lineHeight: 1.4,
+                              wordBreak: "break-word",
                             }}
-                            title={runRow.name}
                           >
                             {runRow.name}
                           </span>
-                        </td>
-                        <td style={{ padding: "0.5rem 0.1rem", minWidth: 0 }}>
-                          <span
-                            className="block whitespace-normal break-all font-mono"
-                            style={{
-                              fontSize: "0.76rem",
-                              lineHeight: 1.2,
-                              color: runRow.isVisible ? "rgba(15, 52, 85, 0.74)" : "rgba(15, 52, 85, 0.45)",
-                            }}
-                            title={runRow.id}
-                          >
-                            {runRow.id}
-                          </span>
-                        </td>
-                      </tr>
-                    ))}
-                    {filteredChartRunRows.length === 0 && (
-                      <tr>
-                        <td
-                          colSpan={3}
-                          style={{
-                            padding: "0.8rem 0.35rem",
-                            textAlign: "center",
-                            fontSize: "0.76rem",
-                            color: "rgba(15, 52, 85, 0.52)",
-                          }}
-                        >
-                          No matching runs.
-                        </td>
-                      </tr>
-                    )}
-                  </tbody>
-                </table>
-              </div>
-              <div className="grid min-w-0 flex-1 grid-cols-3 gap-3">
+                          {monitorState && monitorState !== "NOMINAL" && (
+                            <span
+                              title={`Monitor: ${monitorState}`}
+                              className="mt-[3px] shrink-0 rounded-full"
+                              style={{
+                                width: "5px",
+                                height: "5px",
+                                backgroundColor: monitorState === "REQUALIFY" ? "#EF4444" : "#F59E0B",
+                                boxShadow: `0 0 4px ${monitorState === "REQUALIFY" ? "rgba(239,68,68,0.45)" : "rgba(245,158,11,0.45)"}`,
+                              }}
+                            />
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                  {filteredChartRunRows.length === 0 && (
+                    <div className="px-1 py-6 text-center text-[rgba(15,52,85,0.48)]" style={{ fontSize: "0.625rem" }}>No matching runs.</div>
+                  )}
+                </div>
+              </aside>
+              <div className="grid min-h-0 min-w-0 flex-1 grid-cols-2 gap-3 overflow-y-auto overscroll-y-contain pr-1 [scrollbar-gutter:stable]">
                 {chartWidgets.map((config) => (
                   <div key={config.metricKey} className="w-full min-w-0 aspect-[4/3]">
                     <MetricWidget
@@ -435,7 +446,7 @@ export function RunsPage({
                   </div>
                 ))}
               </div>
-            </motion.div>
+            </div>
           )
         ) : (
           <div className="min-w-0">
@@ -445,7 +456,7 @@ export function RunsPage({
               className="w-full min-w-0 max-w-full rounded-lg bg-[#F9F5EA]"
               style={{ boxShadow: shadowPresets.sm, backgroundColor: TOOL_SURFACE_BACKGROUND }}
             >
-              <ScrollArea className="w-full whitespace-nowrap">
+              <div className="table-scroll-container w-full overflow-x-auto whitespace-nowrap">
                 <table
                   style={{
                     minWidth: "100%",
@@ -453,7 +464,12 @@ export function RunsPage({
                     borderCollapse: "collapse",
                   }}
                 >
-                  <thead>
+                  <thead
+                    style={{
+                      position: "relative",
+                      zIndex: 40,
+                    }}
+                  >
                     <tr
                       style={{
                         backgroundColor: TABLE_HEADER_BACKGROUND,
@@ -482,6 +498,12 @@ export function RunsPage({
                         Status
                       </th>
                       <th style={{ padding: RUNS_TABLE_HEADER_PADDING, textAlign: "left", fontSize: "0.875rem", fontWeight: 600, color: "#0F3455", minWidth: RUNS_TABLE_COLUMN_MIN_WIDTH }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: "0.3rem" }}>
+                          Verified
+                          <VerifiedColumnHelp />
+                        </div>
+                      </th>
+                      <th style={{ padding: RUNS_TABLE_HEADER_PADDING, textAlign: "left", fontSize: "0.875rem", fontWeight: 600, color: "#0F3455", minWidth: RUNS_TABLE_COLUMN_MIN_WIDTH }}>
                         Last edited
                       </th>
                       {scalarMetricColumns.map((column) => (
@@ -494,7 +516,12 @@ export function RunsPage({
                       ))}
                     </tr>
                   </thead>
-                  <tbody>
+                  <tbody
+                    style={{
+                      position: "relative",
+                      zIndex: 0,
+                    }}
+                  >
                     <AnimatePresence>
                       {runs.map((run, index) => {
                         return (
@@ -517,18 +544,20 @@ export function RunsPage({
                     </AnimatePresence>
                   </tbody>
                 </table>
-                <ScrollBar orientation="horizontal" />
-              </ScrollArea>
+              </div>
             </motion.div>
           </div>
         )}
       </div>
+
     </Page>
   );
 }
 
 interface RunRowProps {
-  key?: React.Key;
+  // NOTE: In this repo's JSX typing setup, `key` is sometimes treated as a normal prop.
+  // Keeping it here avoids TS errors when using <RunRow key={...} />.
+  key?: string | number;
   run: RunRecord;
   displayMetrics: DisplayMetric[];
   index: number;
@@ -560,7 +589,7 @@ function RunRow({
   const runColor = getRunColor(index);
   const runId = resolvedRun.id || resolvedRun.run_id || `run-${index}`;
 
-  const handleKeyDown = (e: React.KeyboardEvent) => {
+  const handleKeyDown = (e: { key: string; preventDefault: () => void }) => {
     if (!isInteractive || !onRunClick) return;
     if (e.key === "Enter" || e.key === " ") {
       e.preventDefault();
@@ -669,6 +698,9 @@ function RunRow({
         >
           {resolvedRun.status || "—"}
         </span>
+      </td>
+      <td style={{ padding: RUNS_TABLE_CELL_PADDING, textAlign: "left" }}>
+        <ContractBadge result={resolvedRun.contract_result} size="sm" />
       </td>
       <td style={{ padding: RUNS_TABLE_CELL_PADDING, textAlign: "left" }}>
         <span style={{ display: "block", fontSize: "0.875rem", color: "rgba(15, 52, 85, 0.7)" }}>

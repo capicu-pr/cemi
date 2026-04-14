@@ -3,6 +3,22 @@
 import type { RunRecord } from "../types/domain";
 
 /**
+ * Prefer `id`, then `run_id` — backend payloads sometimes only set `run_id`.
+ * Used for routing, compare selection, and lookups so UI stays consistent.
+ */
+export function resolveRunRecordId(run: RunRecord): string | null {
+  const r = run as { id?: unknown; run_id?: unknown };
+  const a = r.id;
+  const b = r.run_id;
+  const pick = (v: unknown): string | null => {
+    if (typeof v === "string" && v.trim()) return v.trim();
+    if (typeof v === "number" && Number.isFinite(v)) return String(v);
+    return null;
+  };
+  return pick(a) ?? pick(b);
+}
+
+/**
  * True when the metric name indicates per-epoch training/validation metrics,
  * so the UI should label the x-axis "Epoch" instead of "Step".
  */

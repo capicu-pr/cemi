@@ -144,3 +144,46 @@ def test_writer_emits_explicit_action_events() -> None:
     assert latest_emit["run_id"] == run_id
     assert latest_emit["run_name"] == "baseline"
 
+
+def test_log_contract_result_included_in_payload() -> None:
+    sink = _CollectSink()
+    w = Writer(sink=sink, project="demo", stage="eval")
+    w.start_run(name="candidate")
+    w.log_summary_metrics({"final_accuracy": 0.95})
+
+    result = {
+        "run_id": "candidate",
+        "pass": True,
+        "gate_results": [
+            {"id": "accuracy_gate", "role": "quality", "pass": True, "explain": "ok"},
+        ],
+    }
+    w.log_contract_result(result)
+    payload = w.emit_run_record()["payload"]
+
+    assert "contract_result" in payload
+    assert payload["contract_result"]["pass"] is True
+    assert payload["contract_result"]["gate_results"][0]["id"] == "accuracy_gate"
+
+
+def test_log_contract_result_reset_between_runs() -> None:
+    sink = _CollectSink()
+    w = Writer(sink=sink, project="demo", stage="eval")
+
+    w.start_run(name="run-a")
+    w.log_contract_result({"run_id": "run-a", "pass": True, "gate_results": []})
+    w.emit_run_record()
+
+    # Starting a new run must clear the previous contract result.
+    w.start_run(name="run-b")
+    payload = w.emit_run_record()["payload"]
+    assert "contract_result" not in payload
+
+
+def test_log_contract_result_requires_active_run() -> None:
+    import pytest
+    sink = _CollectSink()
+    w = Writer(sink=sink, project="demo", stage="eval")
+    with pytest.raises(RuntimeError):
+        w.log_contract_result({"pass": True, "gate_results": []})
+

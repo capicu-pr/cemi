@@ -2061,6 +2061,81 @@ body::-webkit-scrollbar {
   background: rgba(15, 52, 85, 0.4);
 }
 
+/* Metric widget run list (inside charts) - visible scrollbar + subtle edge shadow */
+.metric-widget-scroll-container {
+  /* Force override global hidden scrollbars */
+  scrollbar-width: thin !important;
+  scrollbar-color: rgba(15, 52, 85, 0.55) rgba(15, 52, 85, 0.10) !important;
+  /* Also hint scroll affordance even before scroll */
+  box-shadow:
+    inset -1px 0 0 rgba(15, 52, 85, 0.10),
+    inset -10px 0 14px rgba(15, 52, 85, 0.035);
+  position: relative !important;
+  /* Reserve room for our always-visible rail */
+  padding-right: 12px !important;
+}
+
+.metric-widget-scroll-container::after {
+  content: "" !important;
+  position: absolute !important;
+  top: 0 !important;
+  right: 0 !important;
+  width: 10px !important;
+  height: 100% !important;
+  background: rgba(15, 52, 85, 0.06) !important;
+  border-left: 1px solid rgba(15, 52, 85, 0.14) !important;
+  box-shadow: inset 2px 0 8px rgba(15, 52, 85, 0.10) !important;
+  pointer-events: none !important;
+}
+
+.metric-widget-scroll-container[data-scrollable="true"]::before {
+  content: "" !important;
+  position: absolute !important;
+  right: 1px !important;
+  top: var(--mw-scroll-thumb-top, 0px) !important;
+  width: 8px !important;
+  height: var(--mw-scroll-thumb-height, 24px) !important;
+  background: rgba(15, 52, 85, 0.42) !important;
+  border-radius: 999px !important;
+  box-shadow:
+    inset 0 0 0 1px rgba(15, 52, 85, 0.26),
+    0 1px 6px rgba(15, 52, 85, 0.10) !important;
+  pointer-events: none !important;
+}
+
+.metric-widget-scroll-container::-webkit-scrollbar {
+  width: 10px !important;
+  height: 10px !important;
+  display: block !important;
+}
+
+.metric-widget-scroll-container::-webkit-scrollbar-track {
+  background: rgba(15, 52, 85, 0.06) !important;
+  border-left: 1px solid rgba(15, 52, 85, 0.14) !important;
+  box-shadow: inset 2px 0 8px rgba(15, 52, 85, 0.10) !important;
+}
+
+.metric-widget-scroll-container::-webkit-scrollbar-thumb {
+  background: rgba(15, 52, 85, 0.36) !important;
+  border-radius: 999px !important;
+  border: 2px solid rgba(249, 245, 234, 0.90) !important;
+  box-shadow:
+    inset 0 0 0 1px rgba(15, 52, 85, 0.26),
+    0 0 0 1px rgba(15, 52, 85, 0.10) !important;
+}
+
+.metric-widget-scroll-container::-webkit-scrollbar-thumb:hover {
+  background: rgba(15, 52, 85, 0.55) !important;
+}
+
+.metric-widget-scroll-container::-webkit-scrollbar-thumb:active {
+  background: rgba(15, 52, 85, 0.62) !important;
+}
+
+.metric-widget-scroll-container::-webkit-scrollbar-corner {
+  background: rgba(15, 52, 85, 0.06) !important;
+}
+
 /* react-netron (ONNX graph) theme override */
 /* The package uses CSS-modules with a hashed class like `._onnxGraph_xxxxx_1` and defaults to `background: #eee`. */
 section[class*="_onnxGraph_"] {

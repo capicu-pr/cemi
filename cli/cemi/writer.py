@@ -108,19 +108,32 @@ def create_writer(
     """
     Create a Writer that logs to local disk.
 
-    This is the primary way to choose where run data is stored. Use the same
-    path for the local gateway (e.g. `cemi gateway --save-dir <log_dir>`) so
-    the workspace UI can read your runs.
+    This is the primary entry point. Use the same path for the local gateway
+    (e.g. ``cemi gateway --save-dir <log_dir>``) so the workspace UI can read
+    your runs.
+
+    Quickstart — context manager (recommended)::
+
+        writer = create_writer(project="demo", log_dir=".cemi")
+        with writer.run("baseline") as run:
+            run.log_metric(name="loss", value=0.42, step=1)
+        # run is automatically ended and saved on exit
+
+    Quickstart — explicit lifecycle::
+
+        writer = create_writer(project="demo", log_dir=".cemi")
+        writer.start_run(name="baseline")
+        writer.log_metric(name="loss", value=0.42, step=1)
+        writer.end_run()   # also saves a final snapshot
 
     Args:
         project: Project name (default: 'default').
         log_dir: Base directory for runs and artifacts. Runs are written to
-            log_dir/runs/<run_id>.jsonl and artifacts to log_dir/artifacts/<run_id>/.
-            Default is '.cemi'.
+            ``log_dir/runs/<run_id>.jsonl`` and artifacts to
+            ``log_dir/artifacts/<run_id>/``. Default is ``.cemi``.
 
     Returns:
-        Writer instance configured to write to log_dir/runs/ (and use
-        log_dir for artifact paths).
+        Writer instance configured to write to ``log_dir/runs/``.
     """
     resolved_dir = Path(log_dir or DEFAULT_SAVE_DIR).expanduser()
     runs_dir = resolved_dir / "runs"
@@ -246,6 +259,32 @@ class WriterDeviceNamespace(_WriterContextNamespace):
         values.update(extra)
         return self._set_values(values)
 
+class _RunContext:
+    """Returned by Writer.run(); manages the start/end lifecycle as a context manager."""
+
+    def __init__(
+        self,
+        writer: "Writer",
+        name: "str | None",
+        tags: "Dict[str, str] | None",
+        kwargs: dict,
+    ) -> None:
+        self._writer = writer
+        self._name = name
+        self._tags = tags
+        self._kwargs = kwargs
+
+    def __enter__(self) -> "Writer":
+        self._writer.start_run(self._name, self._tags, **self._kwargs)
+        return self._writer
+
+    def __exit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> bool:
+        if self._writer._run:  # guard: only if start_run succeeded
+            status = "failed" if exc_type is not None else "succeeded"
+            self._writer.end_run(status=status)
+        return False  # never suppress exceptions
+
+
 @dataclass
 class Writer:
     """
@@ -263,7 +302,7 @@ class Writer:
       and `payload.metrics.events[]` / `payload.metrics.summary[]`.
     """
     sink: Any
-    schema_version: str = "2.0"
+    schema_version: str = "2.2"
     project: str | None = None
     stage: str | None = None
     context: Dict[str, Any] = field(default_factory=dict)
@@ -278,6 +317,13 @@ class Writer:
     _metric_events: List[Dict[str, Any]] = field(default_factory=list)
     _metric_summary: List[Dict[str, Any]] = field(default_factory=list)
     _action_events: List[Dict[str, Any]] = field(default_factory=list)
+    _contract_result: Optional[Dict[str, Any]] = field(default=None)
+    _target_profile: Optional[Dict[str, Any]] = field(default=None)
+    _platform_fingerprint: Optional[Dict[str, Any]] = field(default=None)
+    _eqc_assignment: Optional[Dict[str, Any]] = field(default=None)
+    _accuracy_gate: Optional[Dict[str, Any]] = field(default=None)
+    _inference_events: List[Dict[str, Any]] = field(default_factory=list)
+    _monitor: Optional[Any] = field(default=None)  # RuntimeMonitor instance
 
     _run_id: str | None = None
     _project: str | None = None
@@ -394,6 +440,13 @@ class Writer:
         self._metric_events = []
         self._metric_summary = []
         self._action_events = []
+        self._contract_result = None
+        self._target_profile = None
+        self._platform_fingerprint = None
+        self._eqc_assignment = None
+        self._accuracy_gate = None
+        self._inference_events = []
+        self._monitor = None
         self._sync_context_parameters()
         self._record_action_event(
             action="start_run",
@@ -419,17 +472,72 @@ class Writer:
         status: str = "succeeded",
         ended_at: Optional[str] = None,
     ) -> None:
-        """Finalize run timing/state for the next emitted snapshot."""
+        """Finalize the run and save a final snapshot.
+
+        Sets the run status and end time, then automatically emits a run
+        record so the final state is always persisted without requiring a
+        separate ``emit_run_record()`` call.
+
+        Args:
+            status: Final run status. Common values: ``"succeeded"``,
+                ``"failed"``, ``"cancelled"``.
+            ended_at: ISO-8601 end timestamp. Defaults to now.
+        """
         self._require_run()
         self._run["status"] = status
-        self._run["ended_at"] = ended_at or _now_iso()
-        self._run["ended_at_ms"] = _now_ms()
+        ts = ended_at or _now_iso()
+        self._run["ended_at"] = ts
+        try:
+            self._run["ended_at_ms"] = int(datetime.fromisoformat(ts.replace("Z", "+00:00")).timestamp() * 1000)
+        except Exception:
+            self._run["ended_at_ms"] = _now_ms()
+        self._run["updated_at"] = ts
         self._record_action_event(
             action="end_run",
             summary=status,
             output=f"ended_at={self._run['ended_at']}",
             level="error" if status.lower() == "failed" else "success",
         )
+        self.emit_run_record()
+
+    def run(
+        self,
+        name: str | None = None,
+        tags: Dict[str, str] | None = None,
+        **start_run_kwargs,
+    ) -> "_RunContext":
+        """Context manager for a single run lifecycle.
+
+        Calls ``start_run()`` on entry and ``end_run()`` on exit (which also
+        saves a final snapshot automatically). If an exception escapes the
+        block, the run is marked ``"failed"`` before saving.
+
+        All keyword arguments are forwarded to ``start_run()``.
+
+        Example — minimal::
+
+            with writer.run("baseline") as run:
+                run.log_metric(name="loss", value=0.42, step=1)
+
+        Example — with metadata::
+
+            with writer.run("ptq-int8", tags={"model": "resnet18"}) as run:
+                run.case.set(task="image_classification", dataset="imagenet")
+                for epoch, loss in enumerate(train()):
+                    run.log_metric(name="loss", value=loss, step=epoch)
+                    run.emit_run_record()  # optional: stream progress to UI
+
+        Example — multiple sequential runs::
+
+            for cfg in configs:
+                with writer.run(cfg.name) as run:
+                    run.log_parameter(key="lr", value=cfg.lr)
+                    run.log_metric(name="accuracy", value=evaluate(cfg), step=1)
+
+        Returns:
+            A context manager that yields this ``Writer`` instance.
+        """
+        return _RunContext(self, name, tags, start_run_kwargs)
 
     def set_times(
         self,
@@ -784,22 +892,47 @@ class Writer:
         time_ms: float,
         percentage: float,
         index: Optional[int] = None,
+        layer: Optional[str] = None,
+        graph_index: Optional[int] = None,
+        op_type: Optional[str] = None,
+        kernel: Optional[str] = None,
+        input_shape: Optional[str] = None,
+        output_shape: Optional[str] = None,
+        quantized: Optional[bool] = None,
     ) -> None:
         """
-        Record a coarse operator hotspot as parameters.
+        Record an operator-level latency hotspot as parameters.
 
-        This is intentionally simple and schema-compatible: callers can emit a
-        small, fixed number of hotspots which future UIs can surface.
+        Required fields give the operator name, wall-clock time, and share of
+        total inference latency.  Optional fields pin the operator to an exact
+        layer path, graph node index, kernel/weight shape, tensor I/O shapes,
+        and whether it ran in a quantized dtype on this platform.
         """
         self._require_run()
         prefix = f"operator_hotspot.{index}" if index is not None else f"operator_hotspot.{operator}"
         self.log_parameter(key=f"{prefix}.operator", value=operator, _record_action=False)
         self.log_parameter(key=f"{prefix}.time_ms", value=time_ms, _record_action=False)
         self.log_parameter(key=f"{prefix}.percentage", value=percentage, _record_action=False)
+        if layer is not None:
+            self.log_parameter(key=f"{prefix}.layer", value=layer, _record_action=False)
+        if graph_index is not None:
+            self.log_parameter(key=f"{prefix}.graph_index", value=graph_index, _record_action=False)
+        if op_type is not None:
+            self.log_parameter(key=f"{prefix}.op_type", value=op_type, _record_action=False)
+        if kernel is not None:
+            self.log_parameter(key=f"{prefix}.kernel", value=kernel, _record_action=False)
+        if input_shape is not None:
+            self.log_parameter(key=f"{prefix}.input_shape", value=input_shape, _record_action=False)
+        if output_shape is not None:
+            self.log_parameter(key=f"{prefix}.output_shape", value=output_shape, _record_action=False)
+        if quantized is not None:
+            self.log_parameter(key=f"{prefix}.quantized", value=quantized, _record_action=False)
         self._record_action_event(
             action="log_operator_hotspot",
-            summary=operator,
-            output=f"time_ms={time_ms} percentage={percentage}",
+            summary=f"{layer or ''}.{operator}" if layer else operator,
+            output=f"time_ms={time_ms} percentage={percentage}"
+                   + (f" layer={layer}" if layer else "")
+                   + (f" quantized={quantized}" if quantized is not None else ""),
         )
 
     # ----------------------------
@@ -859,11 +992,30 @@ class Writer:
         _record_action: bool = True,
     ) -> None:
         """
-        Log a numeric metric event and keep legacy compatibility fields in sync.
+        Log a numeric metric for time-series charts.
 
-        If `aggregation == "raw"` the value is treated as an event in the main
-        metric stream. Non-raw aggregations still flow through the legacy metric
-        list so existing UI surfaces can read them.
+        Use ``log_metric`` when you want the value plotted over steps or time
+        (e.g. loss per epoch, accuracy per step). For single-value scalars that
+        should only appear as table columns — such as ``memory_usage_mb``,
+        ``model_size_mb``, or ``throughput_p99`` — use ``log_scalar`` instead.
+
+        Args:
+            name: Metric name shown in the UI chart (e.g. ``"loss"``,
+                ``"val_accuracy"``).
+            value: Numeric value.
+            step: Training step or epoch number. Omit for non-stepped metrics.
+            timestamp_ms: Unix millisecond timestamp. Defaults to now.
+            unit: Display unit string (e.g. ``"ms"``, ``"%"``). Optional.
+            role: Metric category. One of ``"quality"``, ``"performance"``,
+                ``"resource"``, ``"cost"``, ``"custom"`` (default).
+            aggregation: How this value was derived. One of ``"raw"``
+                (default — a single observed value), ``"mean"``, ``"min"``,
+                ``"max"``, ``"p50"``, ``"p90"``, ``"p95"``, ``"p99"``,
+                ``"sum"``, ``"count"``, ``"last"``.
+            direction: Optimization direction for the UI. One of
+                ``"higher_is_better"``, ``"lower_is_better"``, ``"none"``
+                (default).
+            tags: Arbitrary string key-value pairs attached to this event.
         """
         self._require_run()
         if not isinstance(value, (int, float)) or isinstance(value, bool):
@@ -1080,6 +1232,370 @@ class Writer:
     # ----------------------------
     # Emission
     # ----------------------------
+    def log_contract_result(self, result: Dict[str, Any]) -> None:
+        """
+        Attach a contract verification result to this run.
+
+        The result is included in the next ``emit_run_record()`` call under
+        ``payload.contract_result``.  Typically called after ``cemi verify``
+        or after evaluating a contract programmatically::
+
+            from cemi.contract import evaluate_contract, load_contract, load_run_for_evaluation
+            contract = load_contract("contract.json")
+            run = load_run_for_evaluation(".cemi/runs/my-run.jsonl")
+            result = evaluate_contract(runs=[run], contract=contract)
+            writer.log_contract_result(result["results"][0])
+            writer.emit_run_record()
+
+        Args:
+            result: A dict with at minimum ``"pass": bool``.  The full gate
+                    result returned by ``evaluate_contract()`` is accepted as-is.
+        """
+        self._require_run()
+        if not isinstance(result, dict):
+            raise TypeError("contract result must be a dict")
+        self._contract_result = dict(result)
+        self._record_action_event(
+            action="log_contract_result",
+            summary="pass" if result.get("pass") else "fail",
+            output=f"gates={len(result.get('gate_results', []))}",
+        )
+
+    def set_target_profile(
+        self,
+        *,
+        name: str,
+        architecture: str,
+        id: Optional[str] = None,
+        runtime: Optional[str] = None,
+        description: Optional[str] = None,
+        **extra: JSONValue,
+    ) -> None:
+        """
+        Record the intended deployment target for this run.
+
+        Stored under ``payload.target_profile`` in the next
+        :meth:`emit_run_record` call. Shown in the Run Detail header and
+        Console device label (alongside ``context.device.board``).
+
+        Args:
+            name: Human-readable target name, e.g. ``"Raspberry Pi 4B"``.
+            architecture: ISA / platform string, e.g. ``"arm_cortex_a72"``,
+                ``"x86_avx2"``, ``"cuda_ampere"``.
+            id: Optional stable identifier for this profile.
+            runtime: Runtime expected on this target, e.g. ``"tflite"``.
+            description: Optional free-text description.
+            **extra: Any additional key-value pairs to include.
+        """
+        self._require_run()
+        if not isinstance(name, str) or not name.strip():
+            raise ValueError("name must be a non-empty string")
+        if not isinstance(architecture, str) or not architecture.strip():
+            raise ValueError("architecture must be a non-empty string")
+        profile: Dict[str, Any] = {
+            "id": (id or f"profile-{name.strip().lower().replace(' ', '-')}"),
+            "name": name.strip(),
+            "architecture": architecture.strip(),
+        }
+        if runtime is not None:
+            profile["runtime"] = str(runtime)
+        if description is not None:
+            profile["description"] = str(description)
+        profile.update({k: v for k, v in extra.items() if v is not None})
+        self._target_profile = profile
+        self._record_action_event(
+            action="set_target_profile",
+            summary=name.strip(),
+            output=f"architecture={architecture.strip()}" + (f" runtime={runtime}" if runtime else ""),
+        )
+
+    def log_platform_fingerprint(
+        self,
+        *,
+        runtime: str,
+        hardware_backend: str,
+        simd_flags: Optional[List[str]] = None,
+        framework_version: Optional[str] = None,
+        **extra: JSONValue,
+    ) -> None:
+        """
+        Record the execution environment for this run (StaticQualify step 1).
+
+        Captures the runtime identifier, hardware backend, SIMD capability flags,
+        and framework version at inference time. Stored under
+        ``payload.platform_fingerprint`` in the next ``emit_run_record()`` call.
+        This field is informational — it has no pass/fail semantics but is the
+        prerequisite for EQC assignment since the reference must be known.
+
+        Args:
+            runtime: Runtime identifier, e.g. ``"tflite"``, ``"onnxruntime"``,
+                ``"tensorrt"``, ``"pytorch"``.
+            hardware_backend: Hardware backend descriptor, e.g.
+                ``"arm_cortex_m4"``, ``"x86_avx2"``, ``"cuda_ampere"``.
+            simd_flags: SIMD capability flags dispatched at runtime, e.g.
+                ``["neon", "fp16"]``. Pass an empty list if none apply.
+            framework_version: Version string of the runtime framework, e.g.
+                ``"2.14.0"``.
+            **extra: Any additional key-value pairs to include in the fingerprint
+                record (e.g. ``os="Linux"``, ``python_version="3.11.0"``).
+        """
+        self._require_run()
+        if not isinstance(runtime, str) or not runtime.strip():
+            raise ValueError("runtime must be a non-empty string")
+        if not isinstance(hardware_backend, str) or not hardware_backend.strip():
+            raise ValueError("hardware_backend must be a non-empty string")
+        fp: Dict[str, Any] = {
+            "runtime": runtime.strip(),
+            "hardware_backend": hardware_backend.strip(),
+            "recorded_at": _now_iso(),
+        }
+        if simd_flags is not None:
+            fp["simd_flags"] = list(simd_flags)
+        if framework_version is not None:
+            fp["framework_version"] = str(framework_version)
+        fp.update({k: v for k, v in extra.items() if v is not None})
+        self._platform_fingerprint = fp
+        self._record_action_event(
+            action="log_platform_fingerprint",
+            summary=f"{runtime}/{hardware_backend}",
+            output=f"simd_flags={simd_flags} framework_version={framework_version}",
+        )
+
+    def log_eqc_assignment(
+        self,
+        *,
+        eqc_id: str,
+        reference_runtime: str,
+        reference_hardware: str,
+        output_delta_norm: float,
+        tolerance: Optional[float] = None,
+        per_class_delta: Optional[List[Dict[str, Any]]] = None,
+        divergence_matrix: Optional[Dict[str, Any]] = None,
+        **extra: JSONValue,
+    ) -> None:
+        """
+        Record the equivalence class assignment for this run (StaticQualify step 2).
+
+        Captures which EQC this model × runtime × hardware combination belongs to,
+        based on output vector comparison against a float32 CPU reference.
+        ``output_delta_norm`` is the normalized output distance
+        ``‖y_ref − y_test‖ / ‖y_ref‖``.  If ``tolerance`` is supplied, the method
+        computes ``delta_within_tolerance = output_delta_norm <= tolerance``;
+        otherwise defaults to ``True`` (informational). Stored under
+        ``payload.eqc_assignment``.
+
+        Args:
+            eqc_id: Equivalence class label, e.g. ``"EQC-A"``.
+            reference_runtime: Runtime used as the float32 reference baseline,
+                e.g. ``"tflite"``.
+            reference_hardware: Hardware used as the float32 reference baseline,
+                e.g. ``"x86_avx2"``.
+            output_delta_norm: Normalized output distance
+                ``‖y_ref − y_test‖ / ‖y_ref‖`` (non-negative float).
+            tolerance: Maximum acceptable output delta norm.  If omitted, the
+                assignment is recorded without a pass/fail verdict.
+            per_class_delta: Per-output-class divergence list. Each entry is a
+                dict with at least ``{"label": str, "delta": float}``. Used by
+                the EQC Divergence Heatmap when ``divergence_matrix`` is absent.
+                Example::
+
+                    [{"label": "cat", "delta": 0.002},
+                     {"label": "dog", "delta": 0.008}]
+
+            divergence_matrix: Full sample × class divergence grid for the
+                heatmap. Expected shape::
+
+                    {
+                        "classes": ["cat", "dog", ...],      # C class labels
+                        "samples": ["0", "1", ...],          # S sample labels
+                        "values": [[float, ...], ...]        # C × S matrix
+                    }
+
+            **extra: Additional key-value pairs to include in the record.
+        """
+        self._require_run()
+        if not isinstance(eqc_id, str) or not eqc_id.strip():
+            raise ValueError("eqc_id must be a non-empty string")
+        if not isinstance(output_delta_norm, (int, float)) or isinstance(output_delta_norm, bool):
+            raise TypeError("output_delta_norm must be a number")
+        if output_delta_norm < 0:
+            raise ValueError("output_delta_norm must be non-negative")
+        delta_within_tolerance = (
+            bool(output_delta_norm <= tolerance) if tolerance is not None else True
+        )
+        assignment: Dict[str, Any] = {
+            "eqc_id": eqc_id.strip(),
+            "reference_runtime": str(reference_runtime),
+            "reference_hardware": str(reference_hardware),
+            "output_delta_norm": float(output_delta_norm),
+            "delta_within_tolerance": delta_within_tolerance,
+            "recorded_at": _now_iso(),
+        }
+        if tolerance is not None:
+            assignment["tolerance"] = float(tolerance)
+        if per_class_delta is not None:
+            assignment["per_class_delta"] = list(per_class_delta)
+        if divergence_matrix is not None:
+            assignment["divergence_matrix"] = dict(divergence_matrix)
+        assignment.update({k: v for k, v in extra.items() if v is not None})
+        self._eqc_assignment = assignment
+        self._record_action_event(
+            action="log_eqc_assignment",
+            summary=eqc_id,
+            output=f"delta_norm={output_delta_norm:.6g} within_tolerance={delta_within_tolerance}",
+        )
+
+    def log_accuracy_gate(
+        self,
+        *,
+        metric_name: str,
+        metric_value: float,
+        threshold: float,
+        direction: str = "higher_is_better",
+        **extra: JSONValue,
+    ) -> None:
+        """
+        Record the accuracy qualification gate for this run (StaticQualify step 3).
+
+        Evaluates whether ``metric_value`` meets ``threshold`` according to
+        ``direction``, and stores the result under ``payload.accuracy_gate``.
+        The pass/fail verdict is computed by the Writer — callers do not supply it.
+
+        Args:
+            metric_name: Name of the accuracy metric, e.g. ``"top1_accuracy"``.
+            metric_value: Observed value from the evaluation harness.
+            threshold: Minimum (or maximum) acceptable value.
+            direction: ``"higher_is_better"`` (default) or
+                ``"lower_is_better"``.  Determines how ``metric_value`` is
+                compared to ``threshold``.
+            **extra: Additional key-value pairs to include in the record.
+        """
+        self._require_run()
+        if not isinstance(metric_name, str) or not metric_name.strip():
+            raise ValueError("metric_name must be a non-empty string")
+        if not isinstance(metric_value, (int, float)) or isinstance(metric_value, bool):
+            raise TypeError("metric_value must be a number")
+        if not isinstance(threshold, (int, float)) or isinstance(threshold, bool):
+            raise TypeError("threshold must be a number")
+        if direction not in self._DIR_VALUES:
+            raise ValueError(f"direction must be one of {self._DIR_VALUES}")
+        passed = (
+            float(metric_value) >= float(threshold)
+            if direction == "higher_is_better"
+            else float(metric_value) <= float(threshold)
+        )
+        gate: Dict[str, Any] = {
+            "metric_name": metric_name.strip(),
+            "metric_value": float(metric_value),
+            "threshold": float(threshold),
+            "direction": direction,
+            "pass": passed,
+            "recorded_at": _now_iso(),
+        }
+        gate.update({k: v for k, v in extra.items() if v is not None})
+        self._accuracy_gate = gate
+        self._record_action_event(
+            action="log_accuracy_gate",
+            summary="pass" if passed else "fail",
+            output=f"{metric_name}={metric_value:.6g} threshold={threshold:.6g} direction={direction}",
+        )
+
+    def attach_monitor(self, monitor: Any) -> None:
+        """
+        Attach a :class:`~cemi.monitor.RuntimeMonitor` to this Writer.
+
+        After attachment, every :meth:`log_inference_event` call automatically
+        feeds ``loss_value`` to the monitor.  When the monitor's controller
+        state transitions (``NOMINAL→WARN``, ``WARN→REQUALIFY``, etc.), a
+        ``drift_state_transition`` action event is recorded in the run's
+        action event stream, making the transition visible in the workspace
+        Console view.
+
+        The monitor's current context (CUSUM statistic, ADWIN window mean,
+        controller state) is also included in every :meth:`emit_run_record`
+        call as ``payload.monitor_state``.
+
+        Args:
+            monitor: A :class:`~cemi.monitor.RuntimeMonitor` instance.
+                Any object with an ``update(loss_value)`` method returning
+                ``(prev_state, new_state)`` and a ``context_dict()`` method
+                is accepted.
+        """
+        self._monitor = monitor
+
+    def log_inference_event(
+        self,
+        *,
+        loss_value: float,
+        input_hash: Optional[str] = None,
+        output_hash: Optional[str] = None,
+        step: Optional[int] = None,
+        timestamp_ms: Optional[int] = None,
+        **extra: JSONValue,
+    ) -> None:
+        """
+        Record one inference event (RuntimeQualify data stream).
+
+        Stores the event in ``payload.inference_events`` in the next
+        :meth:`emit_run_record` call.  Unlike :meth:`log_metric`, inference
+        events are not recorded in the action event stream — only monitor
+        state *transitions* produce action events, keeping the Console feed
+        readable at high inference rates.
+
+        If a :class:`~cemi.monitor.RuntimeMonitor` has been attached via
+        :meth:`attach_monitor`, each call to this method feeds ``loss_value``
+        to the monitor.  State transitions are automatically recorded as
+        ``drift_state_transition`` action events.
+
+        Args:
+            loss_value: The inference loss (or any scalar quality proxy)
+                for this sample.
+            input_hash: Optional hash of the input tensor (e.g.
+                ``"sha256:abc123"``), for audit traceability.
+            output_hash: Optional hash of the output tensor, for detecting
+                output-level divergence.
+            step: Optional integer step or sample index.
+            timestamp_ms: Optional explicit timestamp in milliseconds since
+                epoch.  Defaults to the current wall-clock time.
+            **extra: Additional key-value pairs to include in the event.
+        """
+        self._require_run()
+        if not isinstance(loss_value, (int, float)) or isinstance(loss_value, bool):
+            raise TypeError("loss_value must be a number")
+        ts_ms = timestamp_ms if isinstance(timestamp_ms, int) else _now_ms()
+        event: Dict[str, Any] = {
+            "loss_value": float(loss_value),
+            "timestamp_ms": ts_ms,
+        }
+        if input_hash is not None:
+            event["input_hash"] = str(input_hash)
+        if output_hash is not None:
+            event["output_hash"] = str(output_hash)
+        if step is not None:
+            event["step"] = int(step)
+        event.update({k: v for k, v in extra.items() if v is not None})
+        self._inference_events.append(event)
+
+        # Feed attached monitor; record action event on state transition
+        if self._monitor is not None:
+            prev_state, new_state = self._monitor.update(float(loss_value))
+            if prev_state != new_state:
+                ctx = self._monitor.context_dict()
+                cusum_s = ctx.get("cusum_statistic", 0)
+                adwin_m = ctx.get("adwin_window_mean") or 0
+                n = ctx.get("n_samples", 0)
+                level = (
+                    "error" if new_state == "REQUALIFY"
+                    else "warn" if new_state == "WARN"
+                    else "info"
+                )
+                self._record_action_event(
+                    action="drift_state_transition",
+                    summary=f"{prev_state}→{new_state}",
+                    output=f"cusum={cusum_s:.6g} adwin_mean={adwin_m:.6g} n={n}",
+                    level=level,
+                )
+
     def emit_run_record(self) -> Dict[str, Any]:
         """
         Emit the current run snapshot to the configured sink.
@@ -1109,6 +1625,20 @@ class Writer:
 
         payload["artifacts"] = list(self._artifacts)
         payload["action_events"] = list(self._action_events)
+        if self._contract_result is not None:
+            payload["contract_result"] = dict(self._contract_result)
+        if self._target_profile is not None:
+            payload["target_profile"] = dict(self._target_profile)
+        if self._platform_fingerprint is not None:
+            payload["platform_fingerprint"] = dict(self._platform_fingerprint)
+        if self._eqc_assignment is not None:
+            payload["eqc_assignment"] = dict(self._eqc_assignment)
+        if self._accuracy_gate is not None:
+            payload["accuracy_gate"] = dict(self._accuracy_gate)
+        if self._inference_events:
+            payload["inference_events"] = list(self._inference_events)
+        if self._monitor is not None:
+            payload["monitor_state"] = self._monitor.context_dict()
 
         # Legacy attachments for existing UI
         if self._summary_metrics:

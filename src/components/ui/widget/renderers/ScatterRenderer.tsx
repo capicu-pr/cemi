@@ -99,20 +99,20 @@ export function ScatterRenderer({
     return (
       <div
         style={{
-          backgroundColor: "#0F3455",
+          backgroundColor: "var(--cemi-hovercard-bg, #0F3455)",
           border: "none",
           borderRadius: "8px",
           padding: "10px 12px",
           boxShadow: "0 10px 24px rgba(15, 52, 85, 0.18)",
         }}
       >
-        <div style={{ fontSize: "0.82rem", fontWeight: 600, color: "#F9F5EA" }}>
+        <div style={{ fontSize: "0.82rem", fontWeight: 600, color: "var(--cemi-hovercard-fg, #F9F5EA)" }}>
           {point.name || point.runId}
         </div>
-        <div style={{ marginTop: "0.35rem", fontSize: "0.76rem", color: "#F9F5EA" }}>
+        <div style={{ marginTop: "0.35rem", fontSize: "0.76rem", color: "var(--cemi-hovercard-fg, #F9F5EA)", opacity: 0.92 }}>
           {config.xMetric}: {formatMetricValue(config.xMetric, point.x)}
         </div>
-        <div style={{ fontSize: "0.76rem", color: "#F9F5EA" }}>
+        <div style={{ fontSize: "0.76rem", color: "var(--cemi-hovercard-fg, #F9F5EA)", opacity: 0.92 }}>
           {config.yMetric}: {formatMetricValue(config.yMetric, point.y)}
         </div>
       </div>

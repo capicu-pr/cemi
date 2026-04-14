@@ -6,11 +6,13 @@ import { motion } from "framer-motion";
 import {
   LineChart,
   Line,
+  BarChart,
+  Bar,
+  Cell,
   XAxis,
   YAxis,
   CartesianGrid,
   Tooltip,
-  Legend,
   ResponsiveContainer,
 } from "recharts";
 import {
@@ -25,6 +27,7 @@ import { ButtonUtility } from "../../../base/buttons/button-utility";
 import { animationPresets } from "../../../ui/animated-interactive";
 import { cn } from "../../../ui/utils";
 import { isEpochAxisMetric } from "../../../../utils/runHelpers";
+import { isScalarMetricSeries } from "./runMetricsToWidgetData";
 import { useMetricChartData } from "./useMetricChartData";
 
 // Color palette for multiple runs (TensorBoard-inspired)
@@ -71,6 +74,7 @@ interface MetricWidgetProps {
   yAxisLabel?: string;
   xAxisLabel?: string;
   showSmoothing?: boolean;
+  showChartControls?: boolean;
   /** Default smoothing factor (0–1). Use 0.2 for light smoothing. */
   defaultSmoothing?: number;
   /**
@@ -147,10 +151,74 @@ function RunVisibilityTable({
   const idTextSize = compact ? "0.68rem" : "0.76rem";
   const iconSizeClassName = compact ? "h-3.5 w-3.5" : "h-4 w-4";
 
+  const scrollRef = useRef<HTMLDivElement | null>(null);
+  const [isScrollable, setIsScrollable] = useState(false);
+
+  const updateFakeScrollbar = () => {
+    const el = scrollRef.current;
+    if (!el) return;
+
+    const scrollH = el.scrollHeight;
+    const clientH = el.clientHeight;
+    const scrollTop = el.scrollTop;
+
+    const scrollableNow = scrollH > clientH + 2;
+    setIsScrollable(scrollableNow);
+    if (!scrollableNow) {
+      el.style.setProperty("--mw-scroll-thumb-top", "0px");
+      el.style.setProperty("--mw-scroll-thumb-height", `${Math.max(18, clientH)}px`);
+      return;
+    }
+
+    const railH = clientH;
+    const thumbH = Math.max(18, Math.floor((clientH / scrollH) * railH));
+    const maxTop = Math.max(0, railH - thumbH);
+    const maxScroll = Math.max(1, scrollH - clientH);
+    const thumbTop = Math.round((scrollTop / maxScroll) * maxTop);
+
+    el.style.setProperty("--mw-scroll-thumb-top", `${thumbTop}px`);
+    el.style.setProperty("--mw-scroll-thumb-height", `${thumbH}px`);
+  };
+
+  useEffect(() => {
+    updateFakeScrollbar();
+  }, [runStats.length, compact]);
+
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    let raf = 0;
+
+    const onScroll = () => {
+      if (raf) cancelAnimationFrame(raf);
+      raf = requestAnimationFrame(() => updateFakeScrollbar());
+    };
+
+    el.addEventListener("scroll", onScroll, { passive: true });
+
+    let ro: ResizeObserver | null = null;
+    if (typeof ResizeObserver !== "undefined") {
+      ro = new ResizeObserver(() => updateFakeScrollbar());
+      ro.observe(el);
+    }
+
+    return () => {
+      el.removeEventListener("scroll", onScroll);
+      if (raf) cancelAnimationFrame(raf);
+      ro?.disconnect();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   return (
     <div
-      className={cn("overflow-y-auto rounded-md border border-[rgba(15,52,85,0.08)] bg-[#F9F5EA]", containerClassName)}
+      className={cn(
+        "metric-widget-scroll-container overflow-y-auto rounded-lg border border-[rgba(15,52,85,0.08)] bg-[#F9F5EA]",
+        containerClassName
+      )}
       style={{ backgroundColor: "var(--cemi-surface-bg, #F9F5EA)" }}
+      ref={scrollRef}
+      data-scrollable={isScrollable ? "true" : "false"}
     >
       <table className="w-full border-collapse">
         <thead>
@@ -262,6 +330,7 @@ export function MetricWidget({
   yAxisLabel,
   xAxisLabel,
   showSmoothing = true,
+  showChartControls = true,
   defaultSmoothing = 0.2,
   frameHeight = 420,
   fillParent = false,
@@ -277,6 +346,8 @@ export function MetricWidget({
   // Default 0.2 (light smoothing); ensure we never default to 0.6
   const initialSmoothing = defaultSmoothing ?? 0.2;
   const [smoothing, setSmoothing] = useState(initialSmoothing);
+  const [xAxisMode, setXAxisMode] = useState<"step" | "wallTime">("step");
+  const [yScale, setYScale] = useState<"linear" | "log">("linear");
   const [visibleRuns, setVisibleRuns] = useState<Set<string>>(
     new Set(runs.map((r) => r.runId))
   );
@@ -285,8 +356,111 @@ export function MetricWidget({
   const [chartHostWidth, setChartHostWidth] = useState<number>(400);
   const resolvedVisibleRuns = visibleRunIds ?? visibleRuns;
 
-  // Prepare chart data with smoothing applied
-  const { chartData } = useMetricChartData(runs, smoothing, resolvedVisibleRuns);
+  const scalarMode = useMemo(() => isScalarMetricSeries(runs), [runs]);
+
+  const barPlotData = useMemo(() => {
+    if (!scalarMode) return [];
+    return runs
+      .filter((r) => resolvedVisibleRuns.has(r.runId))
+      .map((run) => {
+        const runIndex = runs.findIndex((r) => r.runId === run.runId);
+        const idx = runIndex >= 0 ? runIndex : 0;
+        const rawName = run.runName?.trim() || formatRunId(run.runId);
+        const label =
+          rawName.length > 16 ? `${rawName.slice(0, 14)}…` : rawName;
+        return {
+          runId: run.runId,
+          label,
+          fullName: rawName,
+          value: run.data[0]!.value,
+          fill: getRunColor(run, idx),
+        };
+      });
+  }, [runs, scalarMode, resolvedVisibleRuns]);
+
+  const barPlotDataScaled = useMemo(() => {
+    if (!scalarMode) return [];
+    if (yScale !== "log") return barPlotData;
+    return barPlotData.map((d) => ({
+      ...d,
+      value:
+        typeof d.value === "number" && Number.isFinite(d.value) && d.value > 0
+          ? d.value
+          : (null as unknown as number),
+    }));
+  }, [barPlotData, scalarMode, yScale]);
+
+  const approxMaxPoints = Math.max(160, Math.floor(chartHostWidth * 1.8));
+  const { chartData } = useMetricChartData(
+    runs,
+    smoothing,
+    resolvedVisibleRuns,
+    approxMaxPoints
+  );
+  const { chartData: rawChartData } = useMetricChartData(
+    runs,
+    0,
+    resolvedVisibleRuns,
+    approxMaxPoints
+  );
+  const chartDataWithWallTime = useMemo(
+    () =>
+      chartData.map((point) => {
+        const base: Record<string, number | string | null> = { ...point };
+        const timeCandidate = runs
+          .flatMap((run) => run.data)
+          .find((p) => p.step === point.step)?.wallTime;
+        if (typeof timeCandidate === "number" && Number.isFinite(timeCandidate)) {
+          base.wallTime = timeCandidate;
+        }
+        return base;
+      }),
+    [chartData, runs]
+  );
+  const dataHasWallTime = runs.some((run) =>
+    run.data.some((p) => typeof p.wallTime === "number" && Number.isFinite(p.wallTime))
+  );
+  const chartPlotData = useMemo(() => {
+    if (yScale !== "log") return chartDataWithWallTime;
+    return chartDataWithWallTime.map((point) => {
+      const next = { ...point } as Record<string, number | string | null>;
+      runs.forEach((run) => {
+        const val = next[run.runId];
+        if (typeof val === "number" && val <= 0) {
+          next[run.runId] = null;
+        }
+      });
+      return next;
+    });
+  }, [chartDataWithWallTime, runs, yScale]);
+  const rawChartDataWithWallTime = useMemo(
+    () =>
+      rawChartData.map((point) => {
+        const base: Record<string, number | string | null> = { ...point };
+        const timeCandidate = runs
+          .flatMap((run) => run.data)
+          .find((p) => p.step === point.step)?.wallTime;
+        if (typeof timeCandidate === "number" && Number.isFinite(timeCandidate)) {
+          base.wallTime = timeCandidate;
+        }
+        return base;
+      }),
+    [rawChartData, runs]
+  );
+  const rawPlotData = useMemo(() => {
+    if (yScale !== "log") return rawChartDataWithWallTime;
+    return rawChartDataWithWallTime.map((point) => {
+      const next = { ...point } as Record<string, number | string | null>;
+      runs.forEach((run) => {
+        const val = next[run.runId];
+        if (typeof val === "number" && val <= 0) {
+          next[run.runId] = null;
+        }
+      });
+      return next;
+    });
+  }, [rawChartDataWithWallTime, runs, yScale]);
+  const showRawOverlay = smoothing > 0.001;
 
   // Get latest values and trends for each run
   const runStats = useMemo(() => {
@@ -394,22 +568,71 @@ export function MetricWidget({
         </div>
       </div>
 
-      {/* Smoothing Control */}
-      {showSmoothing && (
+      {/* Chart Controls — smoothing and step/wall X only apply to time series */}
+      {((showSmoothing && !scalarMode) || showChartControls) && (
         <div className="px-4 py-2 border-b border-border/10 flex items-center gap-3 flex-shrink-0">
-          <span className="text-xs text-muted-foreground">Smoothing</span>
-          <input
-            type="range"
-            min="0"
-            max="0.99"
-            step="0.01"
-            value={smoothing}
-            onChange={(e) => setSmoothing(parseFloat(e.target.value))}
-            className="w-24 h-1 rounded-lg appearance-none cursor-pointer accent-primary bg-border/40"
-          />
-          <span className="text-xs font-mono text-muted-foreground w-8">
-            {smoothing.toFixed(2)}
-          </span>
+          {showSmoothing && !scalarMode && (
+            <>
+              <span className="text-xs text-muted-foreground">Smoothing</span>
+              <input
+                type="range"
+                min="0"
+                max="0.99"
+                step="0.01"
+                value={smoothing}
+                onChange={(e) => setSmoothing(parseFloat(e.target.value))}
+                className="w-24 h-1 rounded-lg appearance-none cursor-pointer accent-primary bg-border/40"
+              />
+              <span className="text-xs font-mono text-muted-foreground w-8">
+                {smoothing.toFixed(2)}
+              </span>
+            </>
+          )}
+          {showChartControls && (
+            <>
+              {!scalarMode ? (
+                <>
+                  <span className="ml-auto text-xs text-muted-foreground">x-axis</span>
+                  <select
+                    value={xAxisMode}
+                    onChange={(e) => setXAxisMode(e.target.value as "step" | "wallTime")}
+                    className={cn(
+                      "h-7 min-w-[92px] rounded-md border px-2.5 text-xs font-medium",
+                      "border-[rgba(15,52,85,0.18)] bg-white text-[#0F3455] shadow-sm",
+                      "transition-colors duration-150",
+                      "hover:border-[rgba(15,52,85,0.32)]",
+                      "focus:outline-none focus:ring-2 focus:ring-[rgba(15,52,85,0.18)] focus:border-[rgba(15,52,85,0.38)]",
+                      "disabled:cursor-not-allowed disabled:opacity-55 disabled:bg-[rgba(15,52,85,0.04)]"
+                    )}
+                    disabled={!dataHasWallTime}
+                    title={dataHasWallTime ? "Choose x-axis mode" : "Wall time unavailable"}
+                  >
+                    <option value="step">Step</option>
+                    <option value="wallTime">Wall time</option>
+                  </select>
+                </>
+              ) : (
+                <span className="ml-auto text-[11px] font-medium text-[rgba(15,52,85,0.42)]">
+                
+                </span>
+              )}
+              <span className="text-xs text-muted-foreground">y-axis</span>
+              <select
+                value={yScale}
+                onChange={(e) => setYScale(e.target.value as "linear" | "log")}
+                className={cn(
+                  "h-7 min-w-[82px] rounded-md border px-2.5 text-xs font-medium",
+                  "border-[rgba(15,52,85,0.18)] bg-white text-[#0F3455] shadow-sm",
+                  "transition-colors duration-150",
+                  "hover:border-[rgba(15,52,85,0.32)]",
+                  "focus:outline-none focus:ring-2 focus:ring-[rgba(15,52,85,0.18)] focus:border-[rgba(15,52,85,0.38)]"
+                )}
+              >
+                <option value="linear">Linear</option>
+                <option value="log">Log</option>
+              </select>
+            </>
+          )}
         </div>
       )}
 
@@ -423,7 +646,137 @@ export function MetricWidget({
           style={fillParent ? { height: chartHeight } : undefined}
         >
           {(() => {
-            const chartInner = (
+            const tooltipStyles = {
+              contentStyle: {
+                backgroundColor: "var(--cemi-hovercard-bg, #0F3455)",
+                border: "1px solid rgba(255,255,255,0.14)",
+                borderRadius: "10px",
+                padding: "8px 12px",
+                boxShadow: "0 10px 28px rgba(15,52,85,0.22)",
+              },
+              labelStyle: {
+                color: "var(--cemi-hovercard-fg, #F9F5EA)",
+                fontWeight: 500,
+                marginBottom: "4px",
+              },
+              itemStyle: {
+                color: "var(--cemi-hovercard-fg, #F9F5EA)",
+                fontSize: "12px",
+              },
+            };
+
+            if (scalarMode) {
+              if (barPlotDataScaled.length === 0) {
+                return (
+                  <div
+                    className="flex h-full min-h-[160px] w-full items-center justify-center px-4 text-center text-xs text-[rgba(15,52,85,0.45)]"
+                    style={fillParent ? { height: chartHeight } : undefined}
+                  >
+                    No runs visible for this metric. Toggle runs in the sidebar to compare values.
+                  </div>
+                );
+              }
+
+              const barChartInner = (
+                <>
+                  {showGrid && (
+                    <CartesianGrid
+                      strokeDasharray="3 3"
+                      stroke="rgba(15, 52, 85, 0.08)"
+                      vertical={false}
+                    />
+                  )}
+                  <XAxis
+                    dataKey="label"
+                    type="category"
+                    interval={0}
+                    tick={{
+                      fontSize: 9,
+                      fill: "rgba(15, 52, 85, 0.62)",
+                      angle: -45,
+                      textAnchor: "end",
+                    }}
+                    axisLine={{ stroke: "rgba(15, 52, 85, 0.1)" }}
+                    tickLine={{ stroke: "rgba(15, 52, 85, 0.1)" }}
+                    height={52}
+                    label={{
+                      value: "Run",
+                      position: "bottom",
+                      offset: 18,
+                      fontSize: 10,
+                      fill: "rgba(15, 52, 85, 0.5)",
+                    }}
+                  />
+                  <YAxis
+                    scale={yScale}
+                    domain={yScale === "log" ? [0.0000001, "auto"] : ["auto", "auto"]}
+                    allowDataOverflow={yScale === "log"}
+                    tick={{ fontSize: 10, fill: "rgba(15, 52, 85, 0.6)" }}
+                    axisLine={{ stroke: "rgba(15, 52, 85, 0.1)" }}
+                    tickLine={{ stroke: "rgba(15, 52, 85, 0.1)" }}
+                    tickFormatter={(value) => {
+                      if (typeof value !== "number") return "";
+                      if (Math.abs(value) >= 1000) return `${(value / 1000).toFixed(1)}k`;
+                      return value.toFixed(2);
+                    }}
+                    label={
+                      yAxisLabel
+                        ? {
+                            value: yAxisLabel,
+                            angle: -90,
+                            position: "insideLeft",
+                            fontSize: 10,
+                            fill: "rgba(15, 52, 85, 0.5)",
+                          }
+                        : undefined
+                    }
+                  />
+                  <Tooltip
+                    {...tooltipStyles}
+                    formatter={(value: number) => [formatValue(value), metricKey]}
+                    labelFormatter={(_label, payload) => {
+                      const row = payload?.[0]?.payload as { fullName?: string } | undefined;
+                      return row?.fullName || "Run";
+                    }}
+                  />
+                  <Bar dataKey="value" radius={[4, 4, 0, 0]} maxBarSize={56} isAnimationActive={false}>
+                    {barPlotDataScaled.map((entry) => (
+                      <Cell
+                        key={entry.runId}
+                        fill={entry.fill}
+                        opacity={hoveredRun && hoveredRun !== entry.runId ? 0.35 : 1}
+                        style={{ cursor: "pointer" }}
+                        onMouseEnter={() => setHoveredRun(entry.runId)}
+                        onMouseLeave={() => setHoveredRun(null)}
+                      />
+                    ))}
+                  </Bar>
+                </>
+              );
+
+              const barMargins = { top: 8, right: 12, left: 4, bottom: 52 };
+              if (fillParent) {
+                return (
+                  <BarChart
+                    width={chartWidth ?? 400}
+                    height={chartHeight ?? 320}
+                    data={barPlotDataScaled}
+                    margin={barMargins}
+                  >
+                    {barChartInner}
+                  </BarChart>
+                );
+              }
+              return (
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={barPlotDataScaled} margin={barMargins}>
+                    {barChartInner}
+                  </BarChart>
+                </ResponsiveContainer>
+              );
+            }
+
+            const lineChartInner = (
               <>
                 {showGrid && (
                   <CartesianGrid
@@ -433,14 +786,33 @@ export function MetricWidget({
                   />
                 )}
                 <XAxis
-                  dataKey="step"
+                  dataKey={xAxisMode === "wallTime" && dataHasWallTime ? "wallTime" : "step"}
+                  type="number"
                   tick={{ fontSize: 10, fill: "rgba(15, 52, 85, 0.6)" }}
                   axisLine={{ stroke: "rgba(15, 52, 85, 0.1)" }}
                   tickLine={{ stroke: "rgba(15, 52, 85, 0.1)" }}
+                  domain={["dataMin", "dataMax"]}
+                  tickFormatter={(value) => {
+                    if (
+                      xAxisMode === "wallTime" &&
+                      dataHasWallTime &&
+                      typeof value === "number"
+                    ) {
+                      const date = new Date(value);
+                      return date.toLocaleTimeString([], {
+                        hour: "2-digit",
+                        minute: "2-digit",
+                      });
+                    }
+                    return String(value);
+                  }}
                   label={
-                    xAxisLabel
+                    (xAxisLabel || (xAxisMode === "wallTime" && dataHasWallTime))
                       ? {
-                          value: effectiveXLabel,
+                          value:
+                            xAxisMode === "wallTime" && dataHasWallTime
+                              ? "Wall time"
+                              : effectiveXLabel,
                           position: "bottom",
                           fontSize: 10,
                           fill: "rgba(15, 52, 85, 0.5)",
@@ -449,6 +821,9 @@ export function MetricWidget({
                   }
                 />
                 <YAxis
+                  scale={yScale}
+                  domain={yScale === "log" ? [0.0000001, "auto"] : ["auto", "auto"]}
+                  allowDataOverflow={yScale === "log"}
                   tick={{ fontSize: 10, fill: "rgba(15, 52, 85, 0.6)" }}
                   axisLine={{ stroke: "rgba(15, 52, 85, 0.1)" }}
                   tickLine={{ stroke: "rgba(15, 52, 85, 0.1)" }}
@@ -469,31 +844,41 @@ export function MetricWidget({
                   }
                 />
                 <Tooltip
-                  contentStyle={{
-                    backgroundColor: "#0F3455",
-                    border: "none",
-                    borderRadius: "6px",
-                    padding: "8px 12px",
-                    boxShadow: "0 4px 12px rgba(0,0,0,0.15)",
-                  }}
-                  labelStyle={{
-                    color: "#F9F5EA",
-                    fontWeight: 500,
-                    marginBottom: "4px",
-                  }}
-                  itemStyle={{
-                    color: "#F9F5EA",
-                    fontSize: "12px",
-                  }}
+                  {...tooltipStyles}
                   formatter={(value: number, name: string) => [
                     formatValue(value),
                     runs.find((r) => r.runId === name)?.runName || name,
                   ]}
-                  labelFormatter={(step) => `${effectiveXLabel} ${step}`}
+                  labelFormatter={(axisValue) => {
+                    if (
+                      xAxisMode === "wallTime" &&
+                      dataHasWallTime &&
+                      typeof axisValue === "number"
+                    ) {
+                      return `Wall time ${new Date(axisValue).toLocaleString()}`;
+                    }
+                    return `${effectiveXLabel} ${axisValue}`;
+                  }}
                 />
                 {runs.map((run, index) => (
+                  <React.Fragment key={run.runId}>
+                    {showRawOverlay && (
+                      <Line
+                        type="monotone"
+                        data={rawPlotData}
+                        dataKey={run.runId}
+                        stroke={getRunColor(run, index)}
+                        strokeWidth={1}
+                        isAnimationActive={false}
+                        dot={false}
+                        activeDot={false}
+                        opacity={hoveredRun && hoveredRun !== run.runId ? 0.08 : 0.2}
+                        hide={!resolvedVisibleRuns.has(run.runId)}
+                        legendType="none"
+                        connectNulls
+                      />
+                    )}
                     <Line
-                      key={run.runId}
                       type="monotone"
                       dataKey={run.runId}
                       name={run.runName}
@@ -505,21 +890,20 @@ export function MetricWidget({
                       opacity={hoveredRun && hoveredRun !== run.runId ? 0.3 : 1}
                       hide={!resolvedVisibleRuns.has(run.runId)}
                     />
+                  </React.Fragment>
                 ))}
               </>
             );
 
-            // Important: in the fixed widget cards, avoid ResponsiveContainer entirely.
-            // It can still measure 0px in flex/grid/overflow contexts and render a blank chart.
             if (fillParent) {
               return (
                 <LineChart
                   width={chartWidth ?? 400}
                   height={chartHeight ?? 320}
-                  data={chartData}
+                  data={chartPlotData}
                   margin={{ top: 5, right: 20, left: 10, bottom: 5 }}
                 >
-                  {chartInner}
+                  {lineChartInner}
                 </LineChart>
               );
             }
@@ -527,10 +911,10 @@ export function MetricWidget({
             return (
               <ResponsiveContainer width="100%" height="100%">
                 <LineChart
-                  data={chartData}
+                  data={chartPlotData}
                   margin={{ top: 5, right: 20, left: 10, bottom: 5 }}
                 >
-                  {chartInner}
+                  {lineChartInner}
                 </LineChart>
               </ResponsiveContainer>
             );

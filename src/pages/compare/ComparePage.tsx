@@ -19,6 +19,8 @@ import {
   type LoggedPolicyMetadata,
   type CompareMetricSpec,
 } from "./comparePolicy";
+import { PlatformMatrix } from "./PlatformMatrix";
+import { QualGateDiff } from "./QualGateDiff";
 
 interface CaseMetadata {
   suite: string;
@@ -71,7 +73,7 @@ const MODAL_INPUT_STYLE: React.CSSProperties = {
 const TOOL_SURFACE_BACKGROUND = "var(--cemi-surface-bg, #F9F5EA)";
 
 const COMPARE_CARD_STYLE: React.CSSProperties = {
-  borderRadius: "1rem",
+  borderRadius: "0.5rem",
   boxShadow: shadowPresets.sm,
 };
 
@@ -578,7 +580,7 @@ function ConfigModal({
           width: "min(26rem, calc(100vw - 2rem))",
           maxHeight: "min(34rem, calc(100vh - 2rem))",
           overflow: "hidden",
-          borderRadius: "1rem",
+          borderRadius: "0.5rem",
           border: "1px solid rgba(15, 52, 85, 0.12)",
           backgroundColor: TOOL_SURFACE_BACKGROUND,
           boxShadow: "0 24px 80px rgba(15, 52, 85, 0.18)",
@@ -986,49 +988,84 @@ export function ComparePage({
                 className="overflow-hidden border border-[rgba(15,52,85,0.14)] bg-[#F9F5EA] px-4 py-3"
                 style={{ ...COMPARE_CARD_STYLE, backgroundColor: TOOL_SURFACE_BACKGROUND }}
               >
-                <div className="flex items-center justify-between gap-3">
-                  <div className="text-md font-semibold text-[#0F3455]">Decision Policy</div>
-                  {hasDecisionPolicyConflict ? (
-                    <span className="inline-flex rounded-full bg-[#FFF5DA] px-2.5 py-1 text-[0.7rem] font-medium text-[#8A5A00]">
-                      Mixed across runs
-                    </span>
-                  ) : null}
-                </div>
-                {hasDecisionPolicyConflict ? (
-                  <div className="mt-3 rounded-lg bg-[rgba(255,245,218,0.75)] px-3 py-2 text-xs text-[#8A5A00]">
-                    Selected runs disagree on the logged policy. Using <span className="font-semibold">{decisionPolicy}</span>{" "}
-                    for the current compare view. {renderConflictValues(decisionPolicyConflicts)}
-                  </div>
-                ) : null}
-                <div className="mt-3 flex flex-col gap-2">
-                  {DECISION_POLICY_OPTIONS.map((option) => {
-                    const isSelected = decisionPolicy === option;
-                    return (
-                      <button
-                        key={option}
-                        type="button"
-                        aria-pressed={isSelected}
-                        onClick={() => setDecisionPolicy(option)}
-                        className={[
-                          "flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm font-medium transition-colors",
-                          "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F3455]/20",
-                          isSelected
-                            ? "text-[#0F3455]"
-                            : "text-[#0F3455] hover:bg-[rgba(15,52,85,0.05)]",
-                        ].join(" ")}
-                      >
-                        <span className="inline-flex h-5 w-5 items-center justify-center">
-                          {isSelected ? (
-                            <CheckCircle2 className="h-4.5 w-4.5 text-[#0F3455]" />
+                <div className="text-md font-semibold text-[#0F3455]">Qualification</div>
+                {runs.length === 0 ? (
+                  <div className="mt-3 text-sm text-[rgba(15,52,85,0.54)]">No runs selected.</div>
+                ) : (() => {
+                  const withQual = runs.filter((r) => (r as any).eqc_assignment || (r as any).accuracy_gate || (r as any).contract_result);
+                  const qualifiedRuns = withQual.filter((r) => {
+                    const eqcOk = (r as any).eqc_assignment?.delta_within_tolerance;
+                    const gateOk = (r as any).accuracy_gate?.pass;
+                    const contractOk = (r as any).contract_result?.pass;
+                    const checks = [eqcOk, gateOk, contractOk].filter((v) => v !== undefined && v !== null);
+                    return checks.length > 0 && checks.every(Boolean);
+                  });
+                  const eqcGroups = Array.from(new Set(
+                    runs.map((r) => (r as any).eqc_assignment?.eqc_id).filter(Boolean)
+                  ));
+                  return (
+                    <dl className="mt-3 space-y-3 text-sm text-[#0F3455]">
+                      <div>
+                        <dt className="font-semibold">Status</dt>
+                        <dd className="mt-1">
+                          {withQual.length === 0 ? (
+                            <span className="text-[rgba(15,52,85,0.54)]">No qualification data</span>
                           ) : (
-                            <Circle className="h-4.5 w-4.5 text-[rgba(15,52,85,0.38)]" />
+                            <span
+                              style={{
+                                display: "inline-flex",
+                                alignItems: "center",
+                                gap: "0.3rem",
+                                borderRadius: "9999px",
+                                padding: "0.2rem 0.7rem",
+                                fontSize: "0.75rem",
+                                fontWeight: 700,
+                                backgroundColor:
+                                  qualifiedRuns.length === withQual.length
+                                    ? "rgba(34,197,94,0.13)"
+                                    : qualifiedRuns.length === 0
+                                    ? "rgba(239,68,68,0.10)"
+                                    : "rgba(245,158,11,0.12)",
+                                color:
+                                  qualifiedRuns.length === withQual.length
+                                    ? "#166534"
+                                    : qualifiedRuns.length === 0
+                                    ? "#991B1B"
+                                    : "#78350F",
+                              }}
+                            >
+                              {qualifiedRuns.length} / {withQual.length} qualified
+                            </span>
                           )}
-                        </span>
-                        <span>{option}</span>
-                      </button>
-                    );
-                  })}
-                </div>
+                        </dd>
+                      </div>
+                      {eqcGroups.length > 0 && (
+                        <div>
+                          <dt className="font-semibold">EQC Groups</dt>
+                          <dd className="mt-1 flex flex-wrap gap-1">
+                            {eqcGroups.map((g) => (
+                              <span
+                                key={g}
+                                style={{
+                                  display: "inline-block",
+                                  borderRadius: "4px",
+                                  padding: "0.1rem 0.5rem",
+                                  fontSize: "0.72rem",
+                                  fontFamily: "monospace",
+                                  fontWeight: 600,
+                                  backgroundColor: "rgba(15,52,85,0.08)",
+                                  color: "#0F3455",
+                                }}
+                              >
+                                {g}
+                              </span>
+                            ))}
+                          </dd>
+                        </div>
+                      )}
+                    </dl>
+                  );
+                })()}
               </div>
 
               <div
@@ -1094,11 +1131,29 @@ export function ComparePage({
           </section>
 
           <aside
-            className="min-h-[240px] min-w-0 overflow-x-auto overflow-y-auto rounded-xl p-4 shadow-sm lg:min-h-0"
+            className="min-h-[240px] min-w-0 overflow-x-auto overflow-y-auto rounded-lg p-4 shadow-sm lg:min-h-0"
             aria-label="Compare sidebar panel"
             data-tour="compare-sidebar-panel"
           >
             <div className="flex min-h-full min-w-[720px] flex-col gap-4">
+              <div className="text-md font-semibold uppercase tracking-[0.14em] text-[rgba(15,52,85,0.56)]">
+                Qualification
+              </div>
+
+              <div
+                className="overflow-hidden border border-[rgba(15,52,85,0.14)] p-3"
+                style={{ ...COMPARE_CARD_STYLE, backgroundColor: TOOL_SURFACE_BACKGROUND }}
+              >
+                <PlatformMatrix runs={runs} />
+              </div>
+
+              <div
+                className="overflow-hidden border border-[rgba(15,52,85,0.14)] p-3"
+                style={{ ...COMPARE_CARD_STYLE, backgroundColor: TOOL_SURFACE_BACKGROUND }}
+              >
+                <QualGateDiff runs={runs} />
+              </div>
+
               <div className="text-md font-semibold uppercase tracking-[0.14em] text-[rgba(15,52,85,0.56)]">
                 Metrics
               </div>
@@ -1142,7 +1197,7 @@ export function ComparePage({
                     />
                   </div>
                 ) : (
-                  <div className="flex min-h-[320px] items-center justify-center rounded-xl text-sm text-[rgba(15,52,85,0.62)]">
+                  <div className="flex min-h-[320px] items-center justify-center rounded-lg text-sm text-[rgba(15,52,85,0.62)]">
                     No data points are available for the currently selected runs.
                   </div>
                 )}
@@ -1150,11 +1205,72 @@ export function ComparePage({
 
               <div
                 className="overflow-hidden bg-[#F9F5EA] p-3"
-                style={{ borderRadius: "1rem", backgroundColor: TOOL_SURFACE_BACKGROUND }}
+                style={{ borderRadius: "0.5rem", backgroundColor: TOOL_SURFACE_BACKGROUND }}
               >
                 <div className="px-2 pb-3 pt-1">
                   <div className="text-md font-semibold text-[#0F3455]">Candidate Comparison</div>
                 </div>
+
+                {/* Params diff — only shows params that differ across runs */}
+                {candidateComparisonRuns.length > 1 && (() => {
+                  type ParamEntry = { key: string; values: Map<string, string> };
+                  const paramMap = new Map<string, Map<string, string>>();
+                  candidateComparisonRuns.forEach((run) => {
+                    const params = Array.isArray((run as any).params) ? (run as any).params : [];
+                    params.forEach((p: any) => {
+                      if (!p?.key) return;
+                      if (!paramMap.has(p.key)) paramMap.set(p.key, new Map());
+                      paramMap.get(p.key)!.set(run.id, String(p.value ?? "—"));
+                    });
+                  });
+                  const diffParams: ParamEntry[] = [];
+                  paramMap.forEach((valuesByRun, key) => {
+                    const distinctValues = new Set(valuesByRun.values());
+                    if (distinctValues.size > 1) diffParams.push({ key, values: valuesByRun });
+                  });
+                  if (diffParams.length === 0) return null;
+                  return (
+                    <div className="mb-4 px-2">
+                      <div style={{ fontSize: "0.7rem", fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase", color: "rgba(15,52,85,0.46)", marginBottom: "0.5rem" }}>
+                        Differing Parameters
+                      </div>
+                      <ScrollArea className="w-full whitespace-nowrap">
+                        <table style={{ minWidth: "100%", width: "max-content", borderCollapse: "collapse" }}>
+                          <thead>
+                            <tr style={{ backgroundColor: TABLE_HEADER_BACKGROUND, borderBottom: "1px solid rgba(15,52,85,0.14)" }}>
+                              <th style={{ padding: "0.4rem 0.75rem", textAlign: "left", fontSize: "0.75rem", fontWeight: 600, color: "rgba(15,52,85,0.7)", minWidth: "140px", position: "sticky", left: 0, backgroundColor: TOOL_SURFACE_BACKGROUND, zIndex: 2 }}>
+                                Parameter
+                              </th>
+                              {candidateComparisonRuns.map((run, i) => (
+                                <th key={run.id} style={{ padding: "0.4rem 0.75rem", textAlign: "left", fontSize: "0.75rem", fontWeight: 600, color: getRunColor(i), minWidth: "110px", whiteSpace: "nowrap" }}>
+                                  {run.name || run.id.slice(0, 8)}
+                                </th>
+                              ))}
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {diffParams.map(({ key, values }) => (
+                              <tr key={key} style={{ borderBottom: "1px solid rgba(15,52,85,0.07)" }}>
+                                <td style={{ padding: "0.35rem 0.75rem", fontSize: "0.78rem", fontWeight: 500, color: "#0F3455", position: "sticky", left: 0, backgroundColor: TOOL_SURFACE_BACKGROUND, zIndex: 1 }}>
+                                  {key}
+                                </td>
+                                {candidateComparisonRuns.map((run) => {
+                                  const val = values.get(run.id) ?? "—";
+                                  return (
+                                    <td key={run.id} style={{ padding: "0.35rem 0.75rem", fontSize: "0.78rem", fontFamily: "monospace", color: val === "—" ? "rgba(15,52,85,0.38)" : "#0F3455" }}>
+                                      {val}
+                                    </td>
+                                  );
+                                })}
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                        <ScrollBar orientation="horizontal" />
+                      </ScrollArea>
+                    </div>
+                  );
+                })()}
                 <div className="min-w-0">
                   <div
                     className="w-full min-w-0 max-w-full rounded-lg bg-[#F9F5EA]"

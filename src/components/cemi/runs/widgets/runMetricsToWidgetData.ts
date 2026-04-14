@@ -17,6 +17,12 @@ export interface RunMetricData {
   visible?: boolean;
 }
 
+/** True when every run has a single logged value — compare runs with a bar chart instead of a time series. */
+export function isScalarMetricSeries(runs: RunMetricData[]): boolean {
+  if (runs.length === 0) return false;
+  return runs.every((r) => r.data.length === 1);
+}
+
 const RUN_COLORS = [
   "#FF6B6B", "#4ECDC4", "#45B7D1", "#96CEB4", "#FFEAA7",
   "#DDA0DD", "#98D8C8", "#F7DC6F", "#BB8FCE", "#85C1E9",
