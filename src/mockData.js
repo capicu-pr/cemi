@@ -27,11 +27,20 @@ export const mockProjects = [
     "org_id": "org-001",
     "created_at": "2025-12-11T09:15:00Z"
   }
+,
+  {
+    "id": "project-mobilenetv3-compression",
+    "name": "Cross-Platform MobileNetV3-Small Compression",
+    "org_id": "org-001",
+    "created_at": "2025-03-01T08:00:00Z"
+  }
 ];
 
 // Runs (keyed map for O(1) access)
 export const mockRuns = mockRunsData.reduce((acc, run) => {
-  acc[run.id] = run;
+  const id = run?.id ?? run?.run_id;
+  if (!id) return acc;
+  acc[id] = { ...run, id };
   return acc;
 }, {});
 
@@ -68,18 +77,48 @@ function generateMetrics(runId, name, startValue, endValue, nSteps = 10) {
 }
 
 function buildMetricsForRun(run) {
-  const getTag = (key) => (run?.tags || []).find((t) => t?.key === key)?.value;
+  // Writer-generated mock runs include raw metric events already.
+  const writerEvents = run?.metrics?.events;
+  if (Array.isArray(writerEvents) && writerEvents.length > 0) {
+    return writerEvents.map((e, idx) => {
+      const step = typeof e?.step === "number" ? e.step : idx;
+      const runId = e?.run_id ?? run?.id ?? run?.run_id;
+      const ts =
+        typeof e?.timestamp_ms === "number"
+          ? new Date(e.timestamp_ms).toISOString()
+          : typeof e?.timestamp === "string"
+            ? e.timestamp
+            : null;
+
+      return {
+        id: `metric-${runId}-${e?.name ?? "metric"}-${step}`,
+        run_id: runId,
+        name: e?.name,
+        value: e?.value,
+        step,
+        timestamp: ts,
+      };
+    });
+  }
+
+  // Legacy mocks: tags were an array of {key,value}. Writer-style mocks: tags are a dict.
+  const getTag = (key) => {
+    const tags = run?.tags;
+    if (tags && typeof tags === "object" && !Array.isArray(tags)) return tags[key];
+    if (Array.isArray(tags)) return tags.find((t) => t?.key === key)?.value;
+    return undefined;
+  };
   const domain = getTag("domain");
-  const method = run?.method;
-  const suite = getTag("benchmark_suite");
+  const method = getTag("compression_method") ?? run?.method;
+  const suite = getTag("benchmark_suite") ?? getTag("suite");
 
   // Baselines: simulate training curves.
   if (method === 'baseline' && domain === 'vision') {
     const steps = suite === 'QAT_001' ? 3 : 25;
     return [
-      ...generateMetrics(run.id, 'loss', 2.30, run.summary_metrics.loss, steps),
-      ...generateMetrics(run.id, 'accuracy', 0.10, run.summary_metrics.accuracy, steps),
-      ...generateMetrics(run.id, 'f1', 0.12, run.summary_metrics.f1, steps),
+      ...generateMetrics(run.id, 'loss', 2.30, run.summary_metrics?.loss ?? 0.25, steps),
+      ...generateMetrics(run.id, 'accuracy', 0.10, run.summary_metrics?.accuracy ?? 0.9, steps),
+      ...generateMetrics(run.id, 'f1', 0.12, run.summary_metrics?.f1 ?? 0.89, steps),
     ];
   }
 
@@ -87,14 +126,26 @@ function buildMetricsForRun(run) {
   if ((method === 'ptq' || method === 'qat') && domain === 'vision') {
     const baseline = run.baseline_run_id ? mockRuns[run.baseline_run_id] : null;
     const bSize =
-      baseline?.summary_metrics?.model_size_mb ?? run.summary_metrics.model_size_mb;
+      baseline?.summary_metrics?.model_size_mb ??
+      baseline?.summary_metrics?.size_mb ??
+      run.summary_metrics?.model_size_mb ??
+      run.summary_metrics?.size_mb;
     const bLat =
-      baseline?.summary_metrics?.latency_p50_ms ?? run.summary_metrics.latency_p50_ms;
+      baseline?.summary_metrics?.latency_p50_ms ??
+      baseline?.summary_metrics?.latency_ms ??
+      run.summary_metrics?.latency_p50_ms ??
+      run.summary_metrics?.latency_ms;
 
     return [
-      ...generateMetrics(run.id, 'model_size_mb', bSize, run.summary_metrics.model_size_mb, 2),
-      ...generateMetrics(run.id, 'latency_p50_ms', bLat, run.summary_metrics.latency_p50_ms, 2),
-      ...generateMetrics(run.id, 'accuracy', baseline?.summary_metrics?.accuracy ?? run.summary_metrics.accuracy, run.summary_metrics.accuracy, 2),
+      ...generateMetrics(run.id, 'model_size_mb', bSize ?? 44, run.summary_metrics?.model_size_mb ?? run.summary_metrics?.size_mb ?? 44, 2),
+      ...generateMetrics(run.id, 'latency_p50_ms', bLat ?? 50, run.summary_metrics?.latency_p50_ms ?? run.summary_metrics?.latency_ms ?? 50, 2),
+      ...generateMetrics(
+        run.id,
+        'accuracy',
+        baseline?.summary_metrics?.accuracy ?? baseline?.summary_metrics?.top1_accuracy ?? run.summary_metrics?.accuracy ?? run.summary_metrics?.top1_accuracy ?? 0.9,
+        run.summary_metrics?.accuracy ?? run.summary_metrics?.top1_accuracy ?? 0.9,
+        2,
+      ),
     ];
   }
 
@@ -102,9 +153,9 @@ function buildMetricsForRun(run) {
   if (method === 'baseline' && domain === 'timeseries') {
     const steps = 20;
     return [
-      ...generateMetrics(run.id, 'loss', 1.00, run.summary_metrics.loss, steps),
-      ...generateMetrics(run.id, 'accuracy', 0.50, run.summary_metrics.accuracy, steps),
-      ...generateMetrics(run.id, 'f1', 0.35, run.summary_metrics.f1, steps),
+      ...generateMetrics(run.id, 'loss', 1.00, run.summary_metrics?.loss ?? 0.2, steps),
+      ...generateMetrics(run.id, 'accuracy', 0.50, run.summary_metrics?.accuracy ?? 0.8, steps),
+      ...generateMetrics(run.id, 'f1', 0.35, run.summary_metrics?.f1 ?? 0.75, steps),
     ];
   }
 
@@ -163,7 +214,10 @@ export const mockApiClient = {
   // Runs
   getRuns: async (projectId, filters = {}) => {
     await new Promise(resolve => setTimeout(resolve, 400));
-    let runs = Object.values(mockRuns).filter(run => run.project_id === projectId);
+    let runs = Object.values(mockRuns).filter((run) => {
+      const runProjectId = run?.project_id ?? run?.project;
+      return runProjectId === projectId;
+    });
 
     // Optional filters (keeps parity with the original mock client signature)
     if (filters?.status && filters.status !== "all") {
@@ -175,9 +229,15 @@ export const mockApiClient = {
       runs = runs.filter((r) => {
         const name = (r.name || "").toLowerCase();
         const notes = (r.notes || "").toLowerCase();
-        const tags = Array.isArray(r.tags)
-          ? r.tags.some((t) => String(t.value || "").toLowerCase().includes(q))
-          : false;
+        const tags = (() => {
+          if (Array.isArray(r.tags)) {
+            return r.tags.some((t) => String(t?.value ?? "").toLowerCase().includes(q));
+          }
+          if (r.tags && typeof r.tags === "object") {
+            return Object.values(r.tags).some((v) => String(v ?? "").toLowerCase().includes(q));
+          }
+          return false;
+        })();
         return name.includes(q) || notes.includes(q) || tags;
       });
     }
@@ -187,15 +247,32 @@ export const mockApiClient = {
         ? String(filters.tag).split("=")
         : [String(filters.tag), ""];
       runs = runs.filter((r) => {
-        if (!Array.isArray(r.tags)) return false;
-        const match = r.tags.find((t) => t.key === key);
-        if (!match) return false;
+        // Support both tag shapes:
+        // - legacy: [{key,value}]
+        // - writer: { [key]: value }
+        const matchValue = Array.isArray(r.tags)
+          ? r.tags.find((t) => t?.key === key)?.value
+          : r.tags && typeof r.tags === "object"
+            ? r.tags[key]
+            : undefined;
+
+        if (matchValue == null) return false;
         if (value === "") return true;
-        return match.value === value;
+        return String(matchValue) === value;
       });
     }
 
-    return runs.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+    return runs.sort((a, b) => {
+      const aTime =
+        (typeof a?.created_at_ms === "number" ? a.created_at_ms : null) ??
+        Date.parse(a?.created_at ?? "") ??
+        0;
+      const bTime =
+        (typeof b?.created_at_ms === "number" ? b.created_at_ms : null) ??
+        Date.parse(b?.created_at ?? "") ??
+        0;
+      return bTime - aTime;
+    });
   },
 
   getRun: async (runId) => {
@@ -218,6 +295,7 @@ export const mockApiClient = {
     const newRun = {
       id: `run-${Date.now()}`,
       project_id: projectId,
+      project: projectId,
       created_at: new Date().toISOString(),
       status: 'running',
       ...runData,
