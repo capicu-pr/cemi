@@ -438,7 +438,10 @@ class Writer:
         self._run["status"] = status
         ts = ended_at or _now_iso()
         self._run["ended_at"] = ts
-        self._run["ended_at_ms"] = _now_ms()
+        try:
+            self._run["ended_at_ms"] = int(datetime.fromisoformat(ts.replace("Z", "+00:00")).timestamp() * 1000)
+        except Exception:
+            self._run["ended_at_ms"] = _now_ms()
         self._run["updated_at"] = ts
         self._record_action_event(
             action="end_run",
