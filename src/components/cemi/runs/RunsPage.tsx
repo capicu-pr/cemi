@@ -3,7 +3,8 @@ import { Page } from "../layout/Page";
 import { AnimatePresence, motion } from "framer-motion";
 import { CheckCircle2, Circle, Eye, EyeOff, Search } from "lucide-react";
 import type { RunRecord } from "../../../types/domain";
-import { AnimatedInput, animationPresets, shadowPresets } from "../../ui/animated-interactive";
+import { Input } from "../../ui/input";
+import { animationPresets, shadowPresets } from "../../ui/animated-interactive";
 import { MetricWidget, WIDGET_RUN_COLORS } from "./widgets/MetricWidget";
 import { discoverMetricNames, runsToMetricWidgetData } from "./widgets/runMetricsToWidgetData";
 import { ContractBadge } from "./ContractBadge";
@@ -234,7 +235,7 @@ export function RunsPage({
   view = "runs",
   onRefresh: _onRefresh,
 }: RunsPageProps) {
-  const [hiddenChartRunIds, setHiddenChartRunIds] = useState<Set<string>>(new Set());
+  const [hiddenChartRunIds, setHiddenChartRunIds] = useState(new Set<string>());
   const [chartRunQuery, setChartRunQuery] = useState("");
   const displayMetricsByRun = runs.map((run) => getDisplayMetrics(run));
   const scalarMetricColumns = getScalarMetricColumns(displayMetricsByRun);
@@ -347,15 +348,18 @@ export function RunsPage({
                   >
                     Runs
                   </div>
-                  <AnimatedInput
-                    icon={<Search className="w-3 h-3" />}
-                    type="text"
-                    placeholder="Search..."
-                    value={chartRunQuery}
-                    onChange={(event) => setChartRunQuery(event.target.value)}
-                    aria-label="Search chart runs"
-                    style={{ width: "100%", backgroundColor: TOOL_SURFACE_BACKGROUND, fontSize: "0.625rem" }}
-                  />
+                  <div className="relative">
+                    <Search className="pointer-events-none absolute left-2 top-1/2 h-3 w-3 -translate-y-1/2 text-[rgba(15,52,85,0.5)]" />
+                    <Input
+                      type="text"
+                      placeholder="Search..."
+                      value={chartRunQuery}
+                      onChange={(event) => setChartRunQuery(event.target.value)}
+                      aria-label="Search chart runs"
+                      className="h-7 w-full pl-7 pr-2 text-[10px]"
+                      style={{ backgroundColor: TOOL_SURFACE_BACKGROUND }}
+                    />
+                  </div>
                 </div>
                 <div className="flex min-h-0 flex-1 flex-col overflow-y-auto overscroll-y-contain px-1 py-1">
                   {filteredChartRunRows.map((runRow, index) => {
@@ -394,16 +398,6 @@ export function RunsPage({
                               <EyeOff className="h-3 w-3" style={{ color: runRow.color }} />
                             )}
                           </button>
-                          <span
-                            className="mt-[3px] shrink-0 rounded-full"
-                            style={{
-                              display: "inline-block",
-                              width: "6px",
-                              height: "6px",
-                              backgroundColor: runRow.color,
-                              boxShadow: `0 0 0 1.5px ${TOOL_SURFACE_BACKGROUND}`,
-                            }}
-                          />
                           <span
                             className="min-w-0 flex-1 font-medium text-[#0F3455]"
                             style={{
@@ -561,7 +555,9 @@ export function RunsPage({
 }
 
 interface RunRowProps {
-  key?: React.Key;
+  // NOTE: In this repo's JSX typing setup, `key` is sometimes treated as a normal prop.
+  // Keeping it here avoids TS errors when using <RunRow key={...} />.
+  key?: string | number;
   run: RunRecord;
   displayMetrics: DisplayMetric[];
   index: number;
@@ -593,7 +589,7 @@ function RunRow({
   const runColor = getRunColor(index);
   const runId = resolvedRun.id || resolvedRun.run_id || `run-${index}`;
 
-  const handleKeyDown = (e: React.KeyboardEvent) => {
+  const handleKeyDown = (e: { key: string; preventDefault: () => void }) => {
     if (!isInteractive || !onRunClick) return;
     if (e.key === "Enter" || e.key === " ") {
       e.preventDefault();

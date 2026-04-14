@@ -12,7 +12,12 @@ import {
   Eye,
   Terminal,
 } from "lucide-react";
-import {
+import * as Recharts from "recharts";
+import type { Run, RunActionEvent, RunArtifact } from "../../../types/domain";
+import { HelpBubble } from "./HelpBubble";
+
+// Recharts typings can vary across setups; treat chart components as runtime values.
+const {
   Area,
   Bar,
   BarChart,
@@ -30,20 +35,35 @@ import {
   PolarGrid,
   PolarAngleAxis,
   PolarRadiusAxis,
-} from "recharts";
-import type { Run, RunActionEvent, RunArtifact } from "../../../types/domain";
-import { HelpBubble } from "./HelpBubble";
+} = Recharts as any;
 
 // ─── Metric resolver ──────────────────────────────────────────────────────────
 // Tries multiple field name candidates against a run's summary_metrics.
 // This ensures numbers render for both defaultWorkspace and mockRunsData runs.
 
-function resolve(m: Record<string, unknown>, ...keys: string[]): number | null {
-  for (const k of keys) {
-    const v = m[k];
-    if (typeof v === "number" && isFinite(v)) return v;
+function asFiniteNumber(v: unknown): number | null {
+  if (typeof v === "number" && isFinite(v)) return v;
+  if (typeof v === "string") {
+    const n = Number(v);
+    if (Number.isFinite(n)) return n;
   }
   return null;
+}
+
+function resolve(m: Record<string, unknown>, ...keys: string[]): number | null {
+  for (const k of keys) {
+    const n = asFiniteNumber(m[k]);
+    if (n != null) return n;
+  }
+  return null;
+}
+
+function getMetricEventArray(run: Run): Array<{ name?: string; value: number; step?: number; timestamp_ms?: number; timestamp?: string | number }> {
+  const raw = (run as any).metrics;
+  if (Array.isArray(raw)) return raw;
+  const events = raw?.events;
+  if (Array.isArray(events)) return events;
+  return [];
 }
 
 // ─── Formatters ───────────────────────────────────────────────────────────────
@@ -98,7 +118,7 @@ function fmtBytes(b: number): string {
 
 // ─── Primitives ───────────────────────────────────────────────────────────────
 
-function Card({ children, className = "" }: { children?: React.ReactNode; className?: string }) {
+function Card({ children, className = "" }: { children?: any; className?: string }) {
   return (
     <div
       style={{
@@ -126,7 +146,7 @@ function SectionTitle({ title, help }: { title: string; help: string }) {
   );
 }
 
-function Chip({ children, muted = false }: { children?: React.ReactNode; muted?: boolean }) {
+function Chip({ children, muted = false }: { children?: any; muted?: boolean }) {
   return (
     <code className={`rounded-md px-1.5 py-0.5 font-mono text-[11px] ${muted ? "bg-[rgba(15,52,85,0.04)] text-[rgba(15,52,85,0.45)]" : "bg-[rgba(15,52,85,0.06)] text-[#0F3455]"}`}>
       {children}
@@ -146,7 +166,7 @@ function PassPill({ pass }: { pass: boolean }) {
   );
 }
 
-function EmptyBlock({ children }: { children?: React.ReactNode }) {
+function EmptyBlock({ children }: { children?: any }) {
   return (
     <div className="flex flex-col items-center justify-center py-12 text-center">
       <p className="text-xs text-[rgba(15,52,85,0.38)] max-w-xs leading-relaxed">{children}</p>
@@ -154,7 +174,7 @@ function EmptyBlock({ children }: { children?: React.ReactNode }) {
   );
 }
 
-function FieldLabel({ children }: { children?: React.ReactNode }) {
+function FieldLabel({ children }: { children?: any }) {
   return <div className="text-[10px] font-semibold uppercase tracking-[0.06em] text-[rgba(15,52,85,0.38)] mb-0.5">{children}</div>;
 }
 
@@ -302,7 +322,7 @@ function CUSUMChart({ run }: { run: Run }) {
       <Card>
         <SectionTitle
           title="Runtime Monitor"
-          help="Plain-language: watch whether the model’s live predictions stay “normal” or start drifting after a deploy or data shift. Under the hood this is runtime qualification — a one-sided CUSUM on streaming loss ℓₙ vs a baseline mean μ₀ (with slack k) plus an ADWIN-style rolling mean. Flat cumulative sum Sₙ ≈ stable; a sustained climb means shift; crossing the threshold h requests REQUALIFY. Attach cemi.monitor to populate this chart."
+          help={`Plain-language: watch whether the model's live predictions stay "normal" or start drifting after a deploy or data shift. Under the hood this is runtime qualification — a one-sided CUSUM on streaming loss ℓₙ vs a baseline mean μ₀ (with slack k) plus an ADWIN-style rolling mean. Flat cumulative sum Sₙ ≈ stable; a sustained climb means shift; crossing the threshold h requests REQUALIFY. Attach cemi.monitor to populate this chart.`}
         />
         <EmptyBlock>Attach <Chip>cemi.monitor</Chip> to your inference loop to see drift data.</EmptyBlock>
       </Card>
@@ -330,7 +350,7 @@ function CUSUMChart({ run }: { run: Run }) {
       <div className="flex items-center justify-between px-5 py-3 border-b border-[rgba(15,52,85,0.06)] bg-[rgba(15,52,85,0.018)]">
         <div className="flex items-center gap-1.5">
           <span className="text-xs font-semibold text-[#0F3455] tracking-[-0.01em]">Runtime Monitor</span>
-          <HelpBubble text="The shaded curve is a drift alarm built from per-step loss. If it creeps upward, the model isn’t behaving like it did at baseline. We represent this as Sₙ = max(0, Sₙ₋₁ + (ℓₙ − μ₀ − k)) (one-sided CUSUM); dashed lines mark h (hard alarm) and τ_w (early warn). The teal trace is raw inference loss ℓₙ on the right axis for context." />
+          <HelpBubble text="The shaded curve is a drift alarm built from per-step loss. If it creeps upward, the model isn't behaving like it did at baseline. We represent this as Sₙ = max(0, Sₙ₋₁ + (ℓₙ − μ₀ − k)) (one-sided CUSUM); dashed lines mark h (hard alarm) and τ_w (early warn). The teal trace is raw inference loss ℓₙ on the right axis for context." />
         </div>
         {monitor_state && (
           <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-semibold ${stateBg}`}>
@@ -502,7 +522,7 @@ function EQCDivergenceHeatmap({ run }: { run: Run }) {
     <Card>
       <SectionTitle
         title="EQC Divergence Heatmap"
-        help="Equivalence Class (EQC): compare this deployment’s outputs to a trusted reference output vector (typically FP32 on CPU). Each cell is one output class at one inference step, warmer color = larger gap from reference. Rows highlight classes that systematically disagree (often quantization- or kernel-sensitive); columns highlight specific inputs that stress the graph. Technically cells visualize per-class divergence norms vs the reference; supply log_eqc_assignment(..., divergence_matrix=...) or we approximate from per_class_delta when the matrix is absent."
+        help="Equivalence Class (EQC): compare this deployment's outputs to a trusted reference output vector (typically FP32 on CPU). Each cell is one output class at one inference step, warmer color = larger gap from reference. Rows highlight classes that systematically disagree (often quantization- or kernel-sensitive); columns highlight specific inputs that stress the graph. Technically cells visualize per-class divergence norms vs the reference; supply log_eqc_assignment(..., divergence_matrix=...) or we approximate from per_class_delta when the matrix is absent."
       />
       <div className="px-5 py-4">
         {/* Concentration badge */}
@@ -643,7 +663,7 @@ function OperatorHotspotProfile({ run }: { run: Run }) {
     <Card>
       <SectionTitle
         title="Operator Hotspot Profile"
-        help="After compression, where does inference time actually go? This horizontal bar chart is a lightweight profiler: each bar is one operator’s share of wall time from log_operator_hotspot. Red (≥25%) is a dominant bottleneck you’ll feel in p99 latency; amber and navy are progressively smaller slices — use it to decide which kernels or fusions to fix first."
+        help="After compression, where does inference time actually go? This horizontal bar chart is a lightweight profiler: each bar is one operator's share of wall time from log_operator_hotspot. Red (≥25%) is a dominant bottleneck you'll feel in p99 latency; amber and navy are progressively smaller slices — use it to decide which kernels or fusions to fix first."
       />
       <div className="px-3 pt-2 pb-1">
         <ResponsiveContainer width="100%" height={hotspots.length * 32 + 24}>
@@ -773,7 +793,7 @@ function OperatorHotspotTable({ run }: { run: Run }) {
     <Card>
       <SectionTitle
         title="Operator Hotspots"
-        help="The same hotspot data as the chart, but as an engineer’s table: layer path, operator name, op type, kernel / weight layout, input and output tensor shapes, time and %. The Q column is INT vs FP — i.e. whether that op ran quantized on this backend. All rows come from log_operator_hotspot(); use it when you need exact shapes and dtypes to match vendor docs or reproduce a regression."
+        help="The same hotspot data as the chart, but as an engineer's table: layer path, operator name, op type, kernel / weight layout, input and output tensor shapes, time and %. The Q column is INT vs FP — i.e. whether that op ran quantized on this backend. All rows come from log_operator_hotspot(); use it when you need exact shapes and dtypes to match vendor docs or reproduce a regression."
       />
       <div className="overflow-x-auto">
         <table className="w-full text-[11px] border-collapse">
@@ -874,15 +894,50 @@ const RADAR_KEYS = [
 ];
 
 function MetricsRadar({ run }: { run: Run }) {
-  const m = (run.summary_metrics ?? {}) as Record<string, unknown>;
-  const entries = Object.entries(m).filter(([, v]) => typeof v === "number" && isFinite(v as number));
+  const summary = (run.summary_metrics ?? {}) as Record<string, unknown>;
+
+  // Some runs (especially live / partial / monitoring runs) may not have summary_metrics yet.
+  // Fall back to the latest metric event value per name so the radar still renders.
+  const events = getMetricEventArray(run);
+  const latestByName = new Map<string, { value: number; step: number; t: number }>();
+  for (const e of events) {
+    const name = typeof e?.name === "string" ? e.name : "";
+    if (!name) continue;
+    const value = asFiniteNumber(e.value);
+    if (value == null) continue;
+
+    const step = typeof e.step === "number" && Number.isFinite(e.step) ? e.step : -1;
+    const t =
+      typeof e.timestamp_ms === "number" && Number.isFinite(e.timestamp_ms)
+        ? e.timestamp_ms
+        : typeof e.timestamp === "number" && Number.isFinite(e.timestamp)
+          ? e.timestamp
+          : typeof e.timestamp === "string"
+            ? Date.parse(e.timestamp) || 0
+            : 0;
+
+    const prev = latestByName.get(name);
+    // Prefer higher step; if step missing, prefer later timestamp.
+    if (!prev || step > prev.step || (step === prev.step && t > prev.t)) {
+      latestByName.set(name, { value, step, t });
+    }
+  }
+
+  const merged: Record<string, unknown> = { ...summary };
+  // Only fill missing keys from events to avoid overriding explicit summaries.
+  for (const [name, info] of latestByName.entries()) {
+    if (merged[name] == null) merged[name] = info.value;
+  }
+
+  const entries = Object.entries(merged).filter(([, v]) => asFiniteNumber(v) != null);
   if (entries.length === 0) return null;
+
 
   const radarData: Array<{ metric: string; value: number; rawValue: number; unit: string }> = [];
   const usedKeys = new Set<string>();
 
   for (const spec of RADAR_KEYS) {
-    const raw = resolve(m, spec.key, ...spec.aliases);
+    const raw = resolve(merged, spec.key, ...spec.aliases);
     if (raw == null) continue;
     const display = spec.key === "model_size_kb" ? raw / 1024 : raw * spec.scale;
     const normalized = spec.invert ? Math.max(0, 100 - display) : Math.min(display, 100);
@@ -893,70 +948,59 @@ function MetricsRadar({ run }: { run: Run }) {
 
   const overflow = entries.filter(([k]) => !usedKeys.has(k));
 
+  if (radarData.length < 3) return null;
+
   return (
     <Card>
       <SectionTitle
         title="Metrics Profile"
-        help="A single radar snapshot of headline quality and speed numbers (each axis scaled to 0–100 for the plot). Push the blob outward on “more is better” metrics (accuracy, F1, compression, throughput); for “less is better” things (latency, model size, memory) we invert them so inward still reads as better. Extra numeric keys in summary_metrics that aren’t on the radar appear in the grid below."
+        help="A single radar snapshot of headline quality and speed numbers (each axis scaled to 0–100 for the plot). Push the blob outward on 'more is better' metrics (accuracy, F1, compression, throughput); for 'less is better' things (latency, model size, memory) we invert them so inward still reads as better. Extra numeric keys in summary_metrics that aren't on the radar appear in the grid below."
       />
 
-      {radarData.length >= 3 ? (
-        <div className="px-3 pt-2 pb-0 flex justify-center" style={{ flex: 1, minHeight: 200 }}>
-          <ResponsiveContainer width="100%" height="100%">
-            <RadarChart data={radarData} outerRadius="75%">
-              <PolarGrid stroke="rgba(15,52,85,0.08)" />
-              <PolarAngleAxis
-                dataKey="metric"
-                tick={{ fontSize: 10, fill: "rgba(15,52,85,0.45)" }}
-              />
-              <PolarRadiusAxis
-                tick={false}
-                axisLine={false}
-                domain={[0, 100]}
-              />
-              <Radar
-                dataKey="value"
-                stroke="#0F3455"
-                fill="#0F3455"
-                fillOpacity={0.12}
-                strokeWidth={1.5}
-                dot={{ r: 3, fill: "#0F3455" }}
-              />
-              <Tooltip
-                content={({ payload }) => {
-                  if (!payload?.[0]) return null;
-                  const d = payload[0].payload;
-                  return (
-                    <div
-                      className="rounded-lg px-3 py-2 text-[11px]"
-                      style={{
-                        backgroundColor: "var(--cemi-hovercard-bg, #0F3455)",
-                        border: "1px solid rgba(255,255,255,0.14)",
-                        boxShadow: "0 10px 28px rgba(15,52,85,0.22)",
-                        color: "var(--cemi-hovercard-fg, #F9F5EA)",
-                      }}
-                    >
-                      <span className="font-semibold">{d.metric}</span>
-                      <span className="ml-2 font-mono" style={{ opacity: 0.92 }}>
-                        {typeof d.rawValue === "number" ? fmt(d.rawValue) : "—"}{d.unit}
-                      </span>
-                    </div>
-                  );
-                }}
-              />
-            </RadarChart>
-          </ResponsiveContainer>
-        </div>
-      ) : (
-        <div className={`grid divide-x divide-[rgba(15,52,85,0.06)]`} style={{ gridTemplateColumns: `repeat(${radarData.length}, 1fr)` }}>
-          {radarData.map(({ metric, rawValue, unit }) => (
-            <div key={metric} className="px-5 py-4 text-center">
-              <FieldLabel>{metric}</FieldLabel>
-              <div className="font-mono text-lg font-bold text-[#0F3455] mt-1">{fmt(rawValue)}{unit}</div>
-            </div>
-          ))}
-        </div>
-      )}
+      <div className="flex justify-center pt-2 pb-1">
+        <RadarChart data={radarData} width={300} height={220} outerRadius="75%">
+          <PolarGrid stroke="rgba(15,52,85,0.08)" />
+          <PolarAngleAxis
+            dataKey="metric"
+            tick={{ fontSize: 10, fill: "rgba(15,52,85,0.45)" }}
+          />
+          <PolarRadiusAxis
+            tick={false}
+            axisLine={false}
+            domain={[0, 100]}
+          />
+          <Radar
+            dataKey="value"
+            stroke="#0F3455"
+            fill="#0F3455"
+            fillOpacity={0.12}
+            strokeWidth={1.5}
+            dot={{ r: 3, fill: "#0F3455" }}
+          />
+          <Tooltip
+            content={({ payload }) => {
+              if (!payload?.[0]) return null;
+              const d = payload[0].payload;
+              return (
+                <div
+                  className="rounded-lg px-3 py-2 text-[11px]"
+                  style={{
+                    backgroundColor: "var(--cemi-hovercard-bg, #0F3455)",
+                    border: "1px solid rgba(255,255,255,0.14)",
+                    boxShadow: "0 10px 28px rgba(15,52,85,0.22)",
+                    color: "var(--cemi-hovercard-fg, #F9F5EA)",
+                  }}
+                >
+                  <span className="font-semibold">{d.metric}</span>
+                  <span className="ml-2 font-mono" style={{ opacity: 0.92 }}>
+                    {typeof d.rawValue === "number" ? fmt(d.rawValue) : "—"}{d.unit}
+                  </span>
+                </div>
+              );
+            }}
+          />
+        </RadarChart>
+      </div>
 
       {/* Overflow metrics strip */}
       {overflow.length > 0 && (
@@ -1060,7 +1104,7 @@ function consoleLevelColor(level?: string): string {
 }
 
 function LogTab({ run }: { run: Run }) {
-  const viewportRef = useRef<HTMLDivElement | null>(null);
+  const viewportRef = useRef(null as any);
   const actionEvents: RunActionEvent[] = run.action_events ?? [];
 
   const deviceLabel =
@@ -1278,7 +1322,7 @@ const runDetailTabs = [
 ] as const;
 
 function RunDetailTabs({ run }: { run: Run }) {
-  const [active, setActive] = useState<string>("overview");
+  const [active, setActive] = useState("overview");
 
   return (
     <div className="mt-5">
