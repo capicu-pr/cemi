@@ -61,3 +61,10 @@ data/
 # demos/data/
 demos/.ipynb_checkpoints/
 demos/generated_artifacts/
+
+TMLR_Journal_Submission_Benchmarking_Is_Not_Verification.pdf
+ROADMAP.md
+PRD.md
+.claude/
+.pytest_cache/
+docs/

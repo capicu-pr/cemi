@@ -108,19 +108,32 @@ def create_writer(
     """
     Create a Writer that logs to local disk.
 
-    This is the primary way to choose where run data is stored. Use the same
-    path for the local gateway (e.g. `cemi gateway --save-dir <log_dir>`) so
-    the workspace UI can read your runs.
+    This is the primary entry point. Use the same path for the local gateway
+    (e.g. ``cemi gateway --save-dir <log_dir>``) so the workspace UI can read
+    your runs.
+
+    Quickstart — context manager (recommended)::
+
+        writer = create_writer(project="demo", log_dir=".cemi")
+        with writer.run("baseline") as run:
+            run.log_metric(name="loss", value=0.42, step=1)
+        # run is automatically ended and saved on exit
+
+    Quickstart — explicit lifecycle::
+
+        writer = create_writer(project="demo", log_dir=".cemi")
+        writer.start_run(name="baseline")
+        writer.log_metric(name="loss", value=0.42, step=1)
+        writer.end_run()   # also saves a final snapshot
 
     Args:
         project: Project name (default: 'default').
         log_dir: Base directory for runs and artifacts. Runs are written to
-            log_dir/runs/<run_id>.jsonl and artifacts to log_dir/artifacts/<run_id>/.
-            Default is '.cemi'.
+            ``log_dir/runs/<run_id>.jsonl`` and artifacts to
+            ``log_dir/artifacts/<run_id>/``. Default is ``.cemi``.
 
     Returns:
-        Writer instance configured to write to log_dir/runs/ (and use
-        log_dir for artifact paths).
+        Writer instance configured to write to ``log_dir/runs/``.
     """
     resolved_dir = Path(log_dir or DEFAULT_SAVE_DIR).expanduser()
     runs_dir = resolved_dir / "runs"
@@ -245,6 +258,32 @@ class WriterDeviceNamespace(_WriterContextNamespace):
         }
         values.update(extra)
         return self._set_values(values)
+
+class _RunContext:
+    """Returned by Writer.run(); manages the start/end lifecycle as a context manager."""
+
+    def __init__(
+        self,
+        writer: "Writer",
+        name: "str | None",
+        tags: "Dict[str, str] | None",
+        kwargs: dict,
+    ) -> None:
+        self._writer = writer
+        self._name = name
+        self._tags = tags
+        self._kwargs = kwargs
+
+    def __enter__(self) -> "Writer":
+        self._writer.start_run(self._name, self._tags, **self._kwargs)
+        return self._writer
+
+    def __exit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> bool:
+        if self._writer._run:  # guard: only if start_run succeeded
+            status = "failed" if exc_type is not None else "succeeded"
+            self._writer.end_run(status=status)
+        return False  # never suppress exceptions
+
 
 @dataclass
 class Writer:
@@ -433,7 +472,17 @@ class Writer:
         status: str = "succeeded",
         ended_at: Optional[str] = None,
     ) -> None:
-        """Finalize run timing/state for the next emitted snapshot."""
+        """Finalize the run and save a final snapshot.
+
+        Sets the run status and end time, then automatically emits a run
+        record so the final state is always persisted without requiring a
+        separate ``emit_run_record()`` call.
+
+        Args:
+            status: Final run status. Common values: ``"succeeded"``,
+                ``"failed"``, ``"cancelled"``.
+            ended_at: ISO-8601 end timestamp. Defaults to now.
+        """
         self._require_run()
         self._run["status"] = status
         ts = ended_at or _now_iso()
@@ -449,6 +498,46 @@ class Writer:
             output=f"ended_at={self._run['ended_at']}",
             level="error" if status.lower() == "failed" else "success",
         )
+        self.emit_run_record()
+
+    def run(
+        self,
+        name: str | None = None,
+        tags: Dict[str, str] | None = None,
+        **start_run_kwargs,
+    ) -> "_RunContext":
+        """Context manager for a single run lifecycle.
+
+        Calls ``start_run()`` on entry and ``end_run()`` on exit (which also
+        saves a final snapshot automatically). If an exception escapes the
+        block, the run is marked ``"failed"`` before saving.
+
+        All keyword arguments are forwarded to ``start_run()``.
+
+        Example — minimal::
+
+            with writer.run("baseline") as run:
+                run.log_metric(name="loss", value=0.42, step=1)
+
+        Example — with metadata::
+
+            with writer.run("ptq-int8", tags={"model": "resnet18"}) as run:
+                run.case.set(task="image_classification", dataset="imagenet")
+                for epoch, loss in enumerate(train()):
+                    run.log_metric(name="loss", value=loss, step=epoch)
+                    run.emit_run_record()  # optional: stream progress to UI
+
+        Example — multiple sequential runs::
+
+            for cfg in configs:
+                with writer.run(cfg.name) as run:
+                    run.log_parameter(key="lr", value=cfg.lr)
+                    run.log_metric(name="accuracy", value=evaluate(cfg), step=1)
+
+        Returns:
+            A context manager that yields this ``Writer`` instance.
+        """
+        return _RunContext(self, name, tags, start_run_kwargs)
 
     def set_times(
         self,
@@ -903,11 +992,30 @@ class Writer:
         _record_action: bool = True,
     ) -> None:
         """
-        Log a numeric metric event and keep legacy compatibility fields in sync.
+        Log a numeric metric for time-series charts.
 
-        If `aggregation == "raw"` the value is treated as an event in the main
-        metric stream. Non-raw aggregations still flow through the legacy metric
-        list so existing UI surfaces can read them.
+        Use ``log_metric`` when you want the value plotted over steps or time
+        (e.g. loss per epoch, accuracy per step). For single-value scalars that
+        should only appear as table columns — such as ``memory_usage_mb``,
+        ``model_size_mb``, or ``throughput_p99`` — use ``log_scalar`` instead.
+
+        Args:
+            name: Metric name shown in the UI chart (e.g. ``"loss"``,
+                ``"val_accuracy"``).
+            value: Numeric value.
+            step: Training step or epoch number. Omit for non-stepped metrics.
+            timestamp_ms: Unix millisecond timestamp. Defaults to now.
+            unit: Display unit string (e.g. ``"ms"``, ``"%"``). Optional.
+            role: Metric category. One of ``"quality"``, ``"performance"``,
+                ``"resource"``, ``"cost"``, ``"custom"`` (default).
+            aggregation: How this value was derived. One of ``"raw"``
+                (default — a single observed value), ``"mean"``, ``"min"``,
+                ``"max"``, ``"p50"``, ``"p90"``, ``"p95"``, ``"p99"``,
+                ``"sum"``, ``"count"``, ``"last"``.
+            direction: Optimization direction for the UI. One of
+                ``"higher_is_better"``, ``"lower_is_better"``, ``"none"``
+                (default).
+            tags: Arbitrary string key-value pairs attached to this event.
         """
         self._require_run()
         if not isinstance(value, (int, float)) or isinstance(value, bool):

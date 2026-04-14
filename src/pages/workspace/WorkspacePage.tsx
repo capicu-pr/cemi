@@ -239,8 +239,25 @@ export function WorkspacePage({ onNavigate, onProjectSelect, onStartTour }: Work
             animate={{ opacity: 1, y: 0 }}
             className="p-12 text-center"
           >
-            <p className="text-[#D82A2D] mb-4">Failed to load projects.</p>
-            <p className="text-sm text-[rgba(15,52,85,0.7)] mb-4">{loadError}</p>
+            {/failed to fetch|networkerror|network request failed/i.test(loadError) ? (
+              <>
+                <p className="text-[#D82A2D] mb-2 font-medium">Gateway not reachable</p>
+                <p className="text-sm text-[rgba(15,52,85,0.7)] mb-3">
+                  The local gateway isn't running. Start it in your terminal:
+                </p>
+                <code className="inline-block mb-5 px-4 py-2 rounded-lg bg-[rgba(15,52,85,0.07)] text-[#0F3455] text-sm font-mono border border-[rgba(15,52,85,0.12)]">
+                  cemi gateway
+                </code>
+                <p className="text-xs text-[rgba(15,52,85,0.5)] mb-5">
+                  Then click Retry or refresh the page.
+                </p>
+              </>
+            ) : (
+              <>
+                <p className="text-[#D82A2D] mb-2 font-medium">Failed to load projects.</p>
+                <p className="text-sm text-[rgba(15,52,85,0.7)] mb-5">{loadError}</p>
+              </>
+            )}
             <button
               type="button"
               onClick={() => loadProjects()}
